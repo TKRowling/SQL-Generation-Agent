@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { StoredMessage } from '../types/api'
 import { DataTable } from './DataTable'
+import { ReportInsights } from './ReportInsights'
 
 interface MessageCardProps {
   message: StoredMessage
@@ -33,6 +34,9 @@ export function MessageCard({ message }: MessageCardProps) {
           </div>
         )}
         {displayedText && <p className="message-text">{displayedText}</p>}
+        {!isUser && message.insights && message.insights.length > 0 && (
+          <ReportInsights insights={message.insights} chart={message.chart ?? null} rows={message.rows ?? []} />
+        )}
         {message.rows && message.rows.length > 1 && <DataTable rows={message.rows} />}
         {message.rows && message.rows.length === 1 && Object.keys(message.rows[0] ?? {}).length > 1 && (
           <DataTable rows={message.rows} />
@@ -43,6 +47,11 @@ export function MessageCard({ message }: MessageCardProps) {
             copied={copied}
             onCopy={() => void copySql(displayedSql)}
           />
+        )}
+        {!isUser && message.requestId && (
+          <div className="response-trace">
+            Request {message.requestId.slice(0, 8)}{typeof message.executionMs === 'number' ? ` · ${message.executionMs} ms` : ''}
+          </div>
         )}
       </div>
     </article>

@@ -1,6 +1,6 @@
 import pytest
 
-from app.services.database import normalize_select
+from app.services.database import enforce_access_policy, normalize_select
 
 
 def test_adds_limit() -> None:
@@ -24,3 +24,8 @@ def test_keeps_existing_limit() -> None:
 def test_rejects_unsafe_sql(sql: str) -> None:
     with pytest.raises(ValueError):
         normalize_select(sql, 50)
+
+
+def test_rejects_restricted_identifier() -> None:
+    with pytest.raises(ValueError, match="restricted identifier"):
+        enforce_access_policy("SELECT national_id FROM customers")

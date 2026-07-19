@@ -1,12 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { fetchTables, pingDatabase, resetChat, sendChat } from './api/client'
 import { Composer } from './components/Composer'
 import { MessageCard } from './components/MessageCard'
 import { Sidebar } from './components/Sidebar'
 import { TablesDialog } from './components/TablesDialog'
-import type { DatabasePingResponse, StoredMessage } from './types/api'
-import { getSessionId } from './utils/session'
-import { clearMessages, loadMessages, saveMessages } from './utils/storage'
+import type { DatabasePingResponse, StoredConversation, StoredMessage } from './types/api'
+import { conversationTitle, loadConversationState, saveConversationState } from './utils/storage'
 
 const welcomeMessage: StoredMessage = {
   id: 'welcome',
@@ -21,26 +20,34 @@ function createId(): string {
 }
 
 export default function App() {
-  const sessionId = useMemo(getSessionId, [])
-  const [messages, setMessages] = useState<StoredMessage[]>(() => {
-    const stored = loadMessages()
-    return stored.length ? stored : [welcomeMessage]
-  })
+  const [conversationState, setConversationState] = useState(() => loadConversationState(welcomeMessage))
+  const activeConversation = conversationState.conversations.find((item) => item.id === conversationState.activeId)
+  const messages = activeConversation?.messages ?? [welcomeMessage]
   const [sending, setSending] = useState(false)
-  const [resetting, setResetting] = useState(false)
   const [dbStatus, setDbStatus] = useState<DatabasePingResponse | null>(null)
   const [loadingStatus, setLoadingStatus] = useState(true)
   const [tablesOpen, setTablesOpen] = useState(false)
   const [tables, setTables] = useState<string[]>([])
   const [tablesLoading, setTablesLoading] = useState(false)
   const [tablesError, setTablesError] = useState('')
-  const [queuedSuggestion, setQueuedSuggestion] = useState('')
   const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    saveMessages(messages)
+    saveConversationState(conversationState)
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  }, [conversationState])
+
+  function updateConversation(id: string, update: (messages: StoredMessage[]) => StoredMessage[], title?: string) {
+    setConversationState((current) => ({
+      ...current,
+      conversations: current.conversations.map((conversation) => conversation.id === id ? {
+        ...conversation,
+        title: title ?? conversation.title,
+        messages: update(conversation.messages).slice(-100),
+        updatedAt: new Date().toISOString(),
+      } : conversation),
+    }))
+  }
 
   async function refreshDatabaseStatus() {
     setLoadingStatus(true)
@@ -64,6 +71,7 @@ export default function App() {
   }, [])
 
   async function send(message: string, forceData: boolean) {
+    const conversationId = conversationState.activeId
     setSending(true)
     const userMessage: StoredMessage = {
       id: createId(),
@@ -71,15 +79,16 @@ export default function App() {
       text: message,
       createdAt: new Date().toISOString(),
     }
-    setMessages((current) => [...current, userMessage])
+    const title = activeConversation?.title === 'New conversation' ? conversationTitle(message) : undefined
+    updateConversation(conversationId, (current) => [...current, userMessage], title)
 
     try {
       const response = await sendChat({
-        session_id: sessionId,
+        session_id: conversationId,
         message,
         force_data: forceData,
       })
-      setMessages((current) => [
+      updateConversation(conversationId, (current) => [
         ...current,
         {
           id: createId(),
@@ -89,11 +98,15 @@ export default function App() {
           rows: response.rows,
           rowCount: response.row_count,
           sql: response.sql,
+          insights: response.insights,
+          chart: response.chart,
+          requestId: response.request_id,
+          executionMs: response.execution_ms,
           createdAt: new Date().toISOString(),
         },
       ])
     } catch (error) {
-      setMessages((current) => [
+      updateConversation(conversationId, (current) => [
         ...current,
         {
           id: createId(),
@@ -108,17 +121,34 @@ export default function App() {
     }
   }
 
-  async function resetConversation() {
-    setResetting(true)
-    try {
-      await resetChat(sessionId)
-    } catch {
-      // Clear the local display even if the backend is temporarily unreachable.
-    } finally {
-      clearMessages()
-      setMessages([{ ...welcomeMessage, id: createId(), createdAt: new Date().toISOString() }])
-      setResetting(false)
+  function newConversation() {
+    const now = new Date().toISOString()
+    const conversation: StoredConversation = {
+      id: createId(),
+      title: 'New conversation',
+      messages: [{ ...welcomeMessage, id: createId(), createdAt: now }],
+      createdAt: now,
+      updatedAt: now,
     }
+    setConversationState((current) => ({
+      activeId: conversation.id,
+      conversations: [conversation, ...current.conversations].slice(0, 30),
+    }))
+  }
+
+  function selectConversation(id: string) {
+    if (!sending) setConversationState((current) => ({ ...current, activeId: id }))
+  }
+
+  function deleteConversation(id: string) {
+    void resetChat(id).catch(() => undefined)
+    setConversationState((current) => {
+      const remaining = current.conversations.filter((conversation) => conversation.id !== id)
+      if (remaining.length) return { conversations: remaining, activeId: current.activeId === id ? remaining[0]!.id : current.activeId }
+      const now = new Date().toISOString()
+      const replacement: StoredConversation = { id: createId(), title: 'New conversation', messages: [{ ...welcomeMessage, id: createId(), createdAt: now }], createdAt: now, updatedAt: now }
+      return { conversations: [replacement], activeId: replacement.id }
+    })
   }
 
   async function showTables() {
@@ -135,27 +165,19 @@ export default function App() {
     }
   }
 
-  function useSuggestion(suggestion: string) {
-    setQueuedSuggestion(suggestion)
-  }
-
-  useEffect(() => {
-    if (!queuedSuggestion || sending) return
-    const value = queuedSuggestion
-    setQueuedSuggestion('')
-    void send(value, true)
-  }, [queuedSuggestion, sending])
-
   return (
     <div className="app-shell">
       <Sidebar
         dbStatus={dbStatus}
         loadingStatus={loadingStatus}
         onRefreshStatus={() => void refreshDatabaseStatus()}
-        onReset={() => void resetConversation()}
+        onNewConversation={newConversation}
+        onSelectConversation={selectConversation}
+        onDeleteConversation={deleteConversation}
         onShowTables={() => void showTables()}
-        onUseSuggestion={useSuggestion}
-        resetting={resetting}
+        resetting={false}
+        conversations={conversationState.conversations}
+        activeConversationId={conversationState.activeId}
       />
 
       <main className="chat-main">
@@ -170,7 +192,7 @@ export default function App() {
             title={dbStatus?.reachable ? 'Database connected' : 'Database unavailable'}
           />
           <button type="button" onClick={() => void showTables()} disabled={!dbStatus?.reachable}>Tables</button>
-          <button type="button" onClick={() => void resetConversation()} disabled={resetting}>New</button>
+          <button type="button" onClick={newConversation}>New</button>
         </header>
 
         <section className="chat-scroll" aria-live="polite">

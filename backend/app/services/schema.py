@@ -133,6 +133,22 @@ class SchemaService:
                 """,
                 [settings.db_schema],
             )
+            restricted_tables = {
+                item.strip().lower() for item in settings.restricted_tables.split(",") if item.strip()
+            }
+            restricted_columns = SECRET_COLUMNS | {
+                item.strip().lower() for item in settings.restricted_columns.split(",") if item.strip()
+            }
+            columns = [
+                row for row in columns
+                if str(row["table_name"]).lower() not in restricted_tables
+                and str(row["column_name"]).lower() not in restricted_columns
+            ]
+            foreign_keys = [
+                row for row in foreign_keys
+                if str(row["table_name"]).lower() not in restricted_tables
+                and str(row["ref_table"]).lower() not in restricted_tables
+            ]
             text = build_schema_summary(columns, foreign_keys)
             self._cached_text = text
             self._cached_at = now

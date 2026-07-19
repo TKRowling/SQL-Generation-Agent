@@ -1,30 +1,29 @@
-import type { DatabasePingResponse } from '../types/api'
+import type { DatabasePingResponse, StoredConversation } from '../types/api'
 
 interface SidebarProps {
   dbStatus: DatabasePingResponse | null
   loadingStatus: boolean
   onRefreshStatus: () => void
-  onReset: () => void
+  onNewConversation: () => void
+  onSelectConversation: (id: string) => void
+  onDeleteConversation: (id: string) => void
   onShowTables: () => void
-  onUseSuggestion: (value: string) => void
   resetting: boolean
+  conversations: StoredConversation[]
+  activeConversationId: string
 }
-
-const suggestions = [
-  'How many documents were created in the last 7 days?',
-  'Show the top 10 projects by document count.',
-  'List the latest users and their status.',
-  'Count documents grouped by status.',
-]
 
 export function Sidebar({
   dbStatus,
   loadingStatus,
   onRefreshStatus,
-  onReset,
+  onNewConversation,
+  onSelectConversation,
+  onDeleteConversation,
   onShowTables,
-  onUseSuggestion,
   resetting,
+  conversations,
+  activeConversationId,
 }: SidebarProps) {
   const statusClass = dbStatus?.reachable ? 'status-online' : 'status-offline'
   const statusLabel = loadingStatus
@@ -44,20 +43,25 @@ export function Sidebar({
           </div>
         </div>
 
-        <button className="new-chat-button" type="button" onClick={onReset} disabled={resetting}>
+        <button className="new-chat-button" type="button" onClick={onNewConversation} disabled={resetting}>
           {resetting ? 'Resetting…' : '+ New conversation'}
         </button>
 
-        <section className="sidebar-section">
-          <div className="section-heading">Try asking</div>
-          <div className="suggestion-list">
-            {suggestions.map((suggestion) => (
-              <button key={suggestion} type="button" onClick={() => onUseSuggestion(suggestion)}>
-                {suggestion}
-              </button>
+        <section className="sidebar-section history-section">
+          <div className="section-heading">History</div>
+          <div className="history-list">
+            {conversations.map((conversation) => (
+              <div className={`history-item ${conversation.id === activeConversationId ? 'history-item-active' : ''}`} key={conversation.id}>
+                <button className="history-select" type="button" onClick={() => onSelectConversation(conversation.id)} title={conversation.title}>
+                  <span>{conversation.title}</span>
+                  <small>{new Date(conversation.updatedAt).toLocaleDateString()}</small>
+                </button>
+                <button className="history-delete" type="button" onClick={() => onDeleteConversation(conversation.id)} aria-label={`Delete ${conversation.title}`}>×</button>
+              </div>
             ))}
           </div>
         </section>
+
       </div>
 
       <section className="database-panel">

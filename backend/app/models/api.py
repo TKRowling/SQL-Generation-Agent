@@ -38,6 +38,17 @@ class ChatResponse(BaseModel):
     rows: list[dict[str, Any]] = Field(default_factory=list)
     row_count: int = 0
     sql: str | None = None
+    insights: list[str] = Field(default_factory=list)
+    chart: "ChartSpec | None" = None
+    request_id: str | None = None
+    execution_ms: int | None = None
+
+
+class ChartSpec(BaseModel):
+    type: Literal["bar", "line"]
+    title: str
+    x_key: str
+    y_keys: list[str]
 
 
 class ResetRequest(BaseModel):

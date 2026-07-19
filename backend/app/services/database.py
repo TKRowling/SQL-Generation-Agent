@@ -46,6 +46,18 @@ def normalize_select(sql: str, limit: int) -> str:
     return trimmed if LIMIT_RE.search(trimmed) else f"{trimmed} LIMIT {limit}"
 
 
+def enforce_access_policy(sql: str) -> None:
+    settings = get_settings()
+    restricted = [
+        item.strip() for item in
+        f"{settings.restricted_tables},{settings.restricted_columns}".split(",")
+        if item.strip()
+    ]
+    for identifier in restricted:
+        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(identifier)}(?![A-Za-z0-9_])", sql, re.IGNORECASE):
+            raise ValueError(f"Query references restricted identifier: {identifier}")
+
+
 def is_db_unreachable(error: BaseException) -> bool:
     if isinstance(error, (psycopg.OperationalError, psycopg.InterfaceError, PoolTimeout)):
         return True
@@ -168,6 +180,7 @@ class DatabaseService:
 
     async def run_select(self, sql: str, limit: int | None = None) -> list[dict[str, Any]]:
         settings = get_settings()
+        enforce_access_policy(sql)
         capped_sql = normalize_select(sql, limit or settings.max_rows)
         return await self.execute_internal(capped_sql)
 

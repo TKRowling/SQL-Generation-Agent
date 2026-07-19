@@ -80,6 +80,9 @@ class Settings(BaseSettings):
     db_pool_size: int = 5
     db_connect_timeout_seconds: int = 10
     db_statement_timeout_ms: int = 30000
+    restricted_tables: str = "payroll,hr_employees"
+    restricted_columns: str = "password,key_secret,ssn,national_id,card_number"
+    audit_log_path: str = "logs/audit.jsonl"
 
     bot_system_prompt: str = (
         "You are AskMe, a concise and helpful assistant for the connected PostgreSQL "

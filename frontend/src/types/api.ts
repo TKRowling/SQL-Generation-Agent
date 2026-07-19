@@ -12,6 +12,17 @@ export interface ChatResponse {
   rows: ResultRow[]
   row_count: number
   sql: string | null
+  insights: string[]
+  chart: ChartSpec | null
+  request_id: string | null
+  execution_ms: number | null
+}
+
+export interface ChartSpec {
+  type: 'bar' | 'line'
+  title: string
+  x_key: string
+  y_keys: string[]
 }
 
 export interface DatabasePingResponse {
@@ -43,4 +54,16 @@ export interface StoredMessage {
   sql?: string | null
   createdAt: string
   error?: boolean
+  insights?: string[]
+  chart?: ChartSpec | null
+  requestId?: string | null
+  executionMs?: number | null
+}
+
+export interface StoredConversation {
+  id: string
+  title: string
+  messages: StoredMessage[]
+  createdAt: string
+  updatedAt: string
 }
