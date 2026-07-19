@@ -1,0 +1,14 @@
+[project]
+name = "askme-backend"
+version = "1.0.0"
+description = "FastAPI backend for the AskMe read-only text-to-SQL assistant"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
