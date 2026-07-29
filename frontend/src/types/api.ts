@@ -4,6 +4,7 @@ export interface ChatRequest {
   session_id: string
   message: string
   force_data: boolean
+  schema: string
 }
 
 export interface ChatResponse {
@@ -19,7 +20,7 @@ export interface ChatResponse {
 }
 
 export interface ChartSpec {
-  type: 'bar' | 'line'
+  type: 'bar' | 'line' | 'pie'
   title: string
   x_key: string
   y_keys: string[]
@@ -30,11 +31,13 @@ export interface DatabasePingResponse {
   version: string | null
   database: string | null
   schema?: string | null
+  schemas: string[]
   tables: number | null
   message: string | null
 }
 
 export interface TablesResponse {
+  schema: string
   tables: string[]
   count: number
 }
@@ -66,4 +69,5 @@ export interface StoredConversation {
   messages: StoredMessage[]
   createdAt: string
   updatedAt: string
+  schema?: string
 }

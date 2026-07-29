@@ -3,8 +3,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if [[ ! -x "$ROOT/backend/.venv/bin/python" ]]; then
-  echo "Backend virtual environment not found. Create backend/.venv and install requirements-dev.txt first." >&2
+if [[ ! -x "$ROOT/.venv/bin/python" ]]; then
+  echo "Virtual environment not found. Create .venv in the project root and install backend/requirements-dev.txt." >&2
   exit 1
 fi
 
@@ -25,7 +25,7 @@ trap cleanup EXIT INT TERM
 
 (
   cd "$ROOT/backend"
-  .venv/bin/python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+  "$ROOT/.venv/bin/python" -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ) &
 BACKEND_PID=$!
 

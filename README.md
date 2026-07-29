@@ -1,4 +1,4 @@
-# AskMe Web — PostgreSQL Edition
+# AskMe Web - PostgreSQL Edition
 
 AskMe Web is a React and FastAPI replacement for the original Telegram text-to-SQL assistant. This edition runs directly with Python and Node.js and connects to local or remote PostgreSQL. Docker is not required or included.
 
@@ -6,23 +6,34 @@ AskMe Web is a React and FastAPI replacement for the original Telegram text-to-S
 
 - Frontend: React, TypeScript, Vite
 - Backend: FastAPI, Pydantic, Pydantic Settings
-- AI: Cloudflare Workers AI REST API
+- AI: Cloudflare Workers AI REST API (environment-configurable model; 8B Fast recommended for the pilot)
 - Database: PostgreSQL through `psycopg` and `psycopg-pool`
+- SQL AST: SQLGlot with the PostgreSQL dialect
 - Runtime skill: `backend/app/skills/askme-data-assistant/SKILL.md`
 
-## Preserved workflow
+## Current workflow
 
-1. Inspect the selected PostgreSQL schema through `information_schema`.
-2. Hide secret columns such as `password` and `key_secret` from the model.
-3. Cache a compact schema summary for 10 minutes by default.
-4. Route normal conversation separately from database questions.
-5. Generate exactly one PostgreSQL `SELECT` statement.
-6. Reject non-SELECT statements, multiple statements, mutation keywords, and secret-column references.
-7. Open database sessions as read-only and apply a statement timeout.
-8. Add a hard result limit when the SQL does not contain one.
-9. Retry SQL generation once after a normal PostgreSQL query error.
-10. Summarize only rows actually returned by PostgreSQL.
-11. Keep the last eight user/assistant turns per browser session in process memory.
+1. Route forbidden mutations, metadata explanations, normal conversation, and SELECT-only data questions separately.
+2. Build a cached catalog and remove restricted tables and columns.
+3. Semantically rank approved tables using identifiers, columns, business synonyms, and foreign-key neighbors.
+4. Generate exactly one PostgreSQL `SELECT`.
+5. Parse and authorize the SQL AST against the selected schema and authoritative catalog.
+6. Run PostgreSQL `EXPLAIN (FORMAT JSON)` and reject excessive estimated cost or rows.
+7. Correct eligible policy, plan, execution, or result-verification failures within a bounded loop.
+8. Execute only validated SQL in a read-only PostgreSQL session with time and row limits.
+9. Verify deterministic result invariants and summarize only authoritative rows.
+9. Add deterministic insights and a useful line, bar, or pie/donut chart when appropriate.
+10. Record an audit event and return the report, formatted copyable SQL, and exports.
+11. Keep bounded backend context and multiple browser conversations.
+
+AskMe's two database capabilities are:
+
+- General metadata answers grounded in approved database/schema/table/column metadata,
+  with official comments preferred and AI inference clearly qualified.
+- SELECT-only SQL generation protected by catalog validation, read-only execution,
+  bounded correction, limits, and audit logging.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for component and trust-boundary details.
 
 ## Prerequisites
 
@@ -46,10 +57,11 @@ For a typical local PostgreSQL installation, edit `backend/.env` as follows:
 DB_URL=postgresql://localhost:5432/askme
 DB_USER=postgres
 DB_PASSWORD=your_postgres_password
-DB_SCHEMA=public
+DB_SCHEMA=core_banking
+DB_SCHEMAS=accounts,audit_compliance,cards,core_banking,customer360,deposits,digital_banking,fraud_risk,loans,payments
 ```
 
-Replace `askme` with your actual database name. The application also accepts credentials inside the URL:
+`DB_SCHEMA` is the default. `DB_SCHEMAS` is the comma-separated allowlist shown in the user selector. To add or remove a schema later, edit only this line and restart FastAPI; no Python or React change is required. `public` is intentionally excluded from this example. The application also accepts credentials inside the URL:
 
 ```env
 DB_URL=postgresql://postgres:encoded_password@localhost:5432/askme
@@ -77,7 +89,7 @@ Complete the Cloudflare values in the same file:
 ```env
 CF_ACCOUNT_ID=your_account_id
 CF_API_TOKEN=your_api_token
-CF_AI_MODEL=@cf/meta/llama-3.3-70b-instruct-fp8-fast
+CF_AI_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
 CF_AI_TEMPERATURE=0.1
 ```
 
@@ -87,7 +99,12 @@ Useful database settings:
 DB_POOL_SIZE=5
 DB_CONNECT_TIMEOUT_SECONDS=10
 DB_STATEMENT_TIMEOUT_MS=30000
+DB_EXPLAIN_MAX_COST=100000
+DB_EXPLAIN_MAX_ROWS=1000000
+DB_EXPLAIN_MAX_JOINS=8
 MAX_ROWS=50
+SCHEMA_MAX_TABLES=8
+SQL_MAX_ATTEMPTS=3
 EXPOSE_SQL=false
 ```
 
@@ -191,6 +208,8 @@ python -m app.scripts.ask "how many documents were created in the last 7 days"
 
 ## Tests
 
+Current verification baseline: 51 backend tests pass, the frontend production build passes, and the runtime skill validates.
+
 Backend:
 
 ```bash
@@ -213,9 +232,10 @@ npm run build
 | `GET` | `/api/health` | Show configuration-level health information |
 | `POST` | `/api/chat` | Normal chat or automatic database routing |
 | `POST` | `/api/chat/reset` | Clear one browser session's backend memory |
+| `PUT` | `/api/chat/history` | Restore the valid conversation prefix after editing a question |
 | `GET` | `/api/db/ping` | Test the PostgreSQL connection |
-| `GET` | `/api/db/tables` | List tables in `DB_SCHEMA` |
-| `POST` | `/api/schema/refresh` | Refresh the cached schema summary |
+| `GET` | `/api/db/tables?schema=finance` | List tables in one approved selected schema |
+| `POST` | `/api/schema/refresh?schema=finance` | Refresh one approved schema catalog |
 
 ## Runtime skill
 
@@ -233,6 +253,13 @@ Keep these markers unchanged when editing the skill:
 <!-- SUMMARY_RULES_START -->
 <!-- SUMMARY_RULES_END -->
 ```
+
+## Project documentation
+
+- [Current architecture](ARCHITECTURE.md)
+- [Project overview](PROJECT_OVERVIEW.md)
+- [How to build the SQL agent](HOW_TO_BUILD_SQL_AGENT.md)
+- [8B model evaluation](MODEL_8B_EVALUATION.md)
 
 ## Security notes
 

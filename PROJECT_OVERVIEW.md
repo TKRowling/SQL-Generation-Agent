@@ -4,7 +4,7 @@
 
 AskMe is a secure, read-only AI query and reporting application for PostgreSQL. It allows a business user to ask questions in plain language, converts supported questions into PostgreSQL `SELECT` statements, validates and executes those statements through a read-only connection, and returns a business-friendly answer with result tables, insights, charts, exports, and formatted SQL.
 
-The current pilot is configured for the `ai_query_test` database and the `ai_demo` schema. The architecture is reusable for other approved PostgreSQL schemas through environment configuration.
+The current pilot is configured for the `banking_demo` PostgreSQL database with ten approved selectable schemas. Each conversation uses one backend-approved schema selected by the user; the architecture is driven by `DB_SCHEMA` and `DB_SCHEMAS` rather than a hard-coded schema.
 
 AskMe is designed to reduce the number of routine ad-hoc requests handled manually by data analysts while preserving strict database safety controls.
 
@@ -25,11 +25,16 @@ The target user does not need to know table names, joins, SQL syntax, aggregatio
 ### Natural-language database queries
 
 - Accepts business questions through a chat interface.
-- Detects database-related questions and general conversation.
-- Supplies the approved database schema to the language model.
+- Routes metadata explanations and data questions deterministically.
+- Retrieves relevant metadata from the user-selected approved schema.
 - Generates one PostgreSQL `SELECT` statement.
-- Retries once when generated SQL fails for a correctable reason.
-- Retains bounded conversational context for follow-up questions.
+- Parses and authorizes SQL with a PostgreSQL AST policy checker.
+- Guards estimated plan cost and rows with PostgreSQL `EXPLAIN`.
+- Retries eligible failures within the configured bounded attempt limit.
+- Verifies result invariants before business summarization.
+- Retains bounded context only for clear follow-up questions.
+- Rechecks model `UNSUPPORTED` claims against the complete approved catalog.
+- Reuses successful plans for identical question/schema pairs while revalidating every execution.
 
 ### Deterministic metadata requests
 
@@ -44,7 +49,7 @@ This improves correctness, reduces latency, and avoids unnecessary AI usage.
 
 - Natural-language answer based on returned rows.
 - Executive insight panel.
-- Automatic bar or line chart recommendation based on result shape.
+- Validated AI-assisted bar, line, or pie chart planning based on the question and exact result shape; chart values always come from PostgreSQL.
 - Scrollable result table.
 - CSV export.
 - Excel-compatible `.xls` export.
@@ -56,7 +61,13 @@ This improves correctness, reduces latency, and avoids unnecessary AI usage.
 
 - Multiple locally stored conversations.
 - Automatic title based on the first user question.
-- Conversation switching and deletion.
+- Conversation switching, inline renaming, and deletion.
+- User-question editing with automatic answer regeneration and removal of obsolete later turns.
+- Collapsible desktop sidebar and slide-out mobile history drawer.
+- One approved schema selection stored independently for each conversation.
+- Conversation and active-schema context header.
+- Active-schema indicator in the composer.
+- Clear loading, empty-result, and error states.
 - Separate backend session context per conversation.
 - Up to 30 conversations and 100 messages per conversation in browser storage.
 - Migration of the original single-conversation browser history.
@@ -68,8 +79,9 @@ This improves correctness, reduces latency, and avoids unnecessary AI usage.
 | Frontend | React 19, TypeScript, Vite |
 | Backend API | FastAPI, Pydantic |
 | Database | PostgreSQL through Psycopg 3 connection pooling |
+| SQL policy parser | SQLGlot with the PostgreSQL dialect |
 | AI provider | Cloudflare Workers AI REST API |
-| Default model | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` |
+| AI model | Environment-configurable; `@cf/meta/llama-3.1-8b-instruct-fast` is recommended for the controlled pilot |
 | HTTP client | HTTPX |
 | Backend tests | Pytest, pytest-asyncio |
 | Browser persistence | `localStorage` |
@@ -78,6 +90,8 @@ This improves correctness, reduces latency, and avoids unnecessary AI usage.
 The current implementation does not require Docker or Kubernetes.
 
 ## 5. Architecture
+
+The canonical, implementation-aligned component flow and trust boundaries are maintained in [ARCHITECTURE.md](ARCHITECTURE.md). In summary, AskMe is one constrained staged agent: deterministic routing, semantic metadata retrieval, AI SQL proposal, AST policy checking, EXPLAIN cost guarding, bounded recovery, read-only execution, result verification, grounded analysis, validated reporting, and audit.
 
 ```text
 ┌──────────────────────────────┐
@@ -109,6 +123,13 @@ The current implementation does not require Docker or Kubernetes.
 
 ## 6. End-to-end workflow
 
+The workflow has two explicit database branches:
+
+- **Metadata assistant:** general database, schema, table, column, type, key, comment,
+  relationship, definition, and variable-meaning questions. It never queries business rows.
+- **SQL generator:** analytical data questions that require one validated PostgreSQL
+  `SELECT`, followed by read-only execution and grounded reporting.
+
 ### Step 1: Receive and authenticate the request
 
 The frontend sends a `POST /api/chat` request containing:
@@ -116,6 +137,7 @@ The frontend sends a `POST /api/chat` request containing:
 - A unique conversation/session ID.
 - The user’s message.
 - Whether database-only routing is enabled.
+- The active backend-approved schema for the conversation.
 
 When `ASKME_API_KEY` is configured, the backend requires the matching value in the `X-API-Key` header.
 
@@ -138,6 +160,11 @@ A blocked request produces no AI call, no database call, no rows, and no destruc
 
 Database-name and table-list questions are answered directly from configuration or PostgreSQL metadata. These questions do not need model inference.
 
+Table-definition questions are also routed deterministically. AskMe returns PostgreSQL
+table comments when available; otherwise it clearly labels a basic purpose inferred from
+the table name and includes approved example columns. Contextual follow-ups such as
+“What are they?” reuse the preceding table-list context instead of attempting invalid SQL.
+
 ### Step 4: Discover the approved schema
 
 The schema service reads:
@@ -149,6 +176,8 @@ The schema service reads:
 - Foreign-key relationships.
 
 Restricted tables and columns are removed before the schema is provided to the language model. Schema results are cached for `SCHEMA_CACHE_SECONDS` and may be refreshed through the API.
+
+Discovery is progressive: the model receives the complete approved table-name inventory, but detailed columns and keys only for the most relevant tables and approved foreign-key neighbors. Raw sample rows are not used for discovery.
 
 ### Step 5: Route the request
 
@@ -164,22 +193,26 @@ The query agent decides whether the message is:
 For a database question, Cloudflare Workers AI receives:
 
 - The SQL-generation rules from the runtime skill.
-- The filtered PostgreSQL schema summary.
-- Bounded conversation history.
+- The approved table inventory and detailed schemas for only the most relevant tables.
+- Relevant bounded conversation history only when the message is a clear follow-up.
 - The current question.
 
 The model must return exactly one executable PostgreSQL `SELECT` statement.
 
-### Step 7: Validate SQL
+### Step 7: Validate SQL and estimated cost
 
 The backend independently enforces:
 
-- The statement must begin with `SELECT`.
+- SQLGlot must parse exactly one PostgreSQL `SELECT`.
 - Only one statement is allowed.
-- Mutation and administration keywords are forbidden.
+- CTEs and subqueries must also remain read-only.
+- Referenced schemas and tables must exist in the authoritative approved catalog.
+- Aliases and qualified column references must resolve.
 - Restricted table and column identifiers are forbidden.
 - Credential columns are forbidden.
-- A hard result limit is appended when the query has no limit.
+- `SELECT *` is rejected; `COUNT(*)` remains allowed.
+- Join count and result limits are bounded.
+- `EXPLAIN (FORMAT JSON)` estimated cost and rows must remain within policy.
 
 Model instructions are not treated as a security boundary. Validation and database permissions provide defense in depth.
 
@@ -195,9 +228,11 @@ The database service uses a connection pool configured with:
 
 The production database role should independently have only `CONNECT`, schema `USAGE`, and approved `SELECT` privileges.
 
-### Step 9: Recover from a correctable SQL error
+### Step 9: Verify and recover from correctable failures
 
-If PostgreSQL rejects generated SQL for a non-connectivity reason, the agent sends the database error back to the SQL-generation stage and requests one corrected `SELECT`. Connectivity errors are not incorrectly treated as SQL-generation mistakes.
+After execution, deterministic checks validate observable requirements such as count shape, top-N ordering and limits, and chartable result shape. If validation, cost checking, execution, or result verification fails for a correctable reason, the agent expands the relevant approved schema and requests a different corrected `SELECT`.
+
+A model-generated `UNSUPPORTED` response is rechecked against the complete approved catalog without previous conversation history. Attempts are bounded by `SQL_MAX_ATTEMPTS`; repeated rejected SQL stops, and connectivity errors are never treated as SQL-generation mistakes.
 
 ### Step 10: Summarize results
 
@@ -209,8 +244,9 @@ The deterministic reporting service adds:
 
 - Row-count insight.
 - Numeric range insights.
-- A bar-chart recommendation for categorical results.
+- A bar-chart recommendation for general categorical comparisons.
 - A line-chart recommendation for date/time results.
+- A pie-chart recommendation only for small, non-negative part-to-whole breakdowns.
 
 The frontend renders the answer, insights, chart, table, SQL, exports, request ID, and elapsed time.
 
@@ -238,7 +274,7 @@ Classifies metadata, database, chat, and forbidden mutation requests. Critical m
 
 ### Schema discovery stage
 
-Builds an authoritative schema summary from PostgreSQL and hides restricted domains before inference.
+Builds an authoritative approved catalog, exposes table names as an inventory, and retrieves detailed schemas only for relevant tables and foreign-key neighbours. Restricted domains remain hidden before inference.
 
 ### SQL planner/generator stage
 
@@ -292,10 +328,10 @@ The skill improves model behavior but does not replace deterministic security co
 
 ## 9. AI model
 
-The default model is configured through:
+The model is selected through the environment. The tested 8B Fast model is recommended for the controlled pilot:
 
 ```env
-CF_AI_MODEL=@cf/meta/llama-3.3-70b-instruct-fp8-fast
+CF_AI_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
 ```
 
 The backend calls the Cloudflare Workers AI REST endpoint:
@@ -367,6 +403,7 @@ Protect this file as sensitive operational data because it contains user questio
 | `POST` | `/api/schema/refresh` | Refresh cached schema metadata |
 | `POST` | `/api/chat` | Execute the query-agent workflow |
 | `POST` | `/api/chat/reset` | Clear backend memory for one conversation |
+| `PUT` | `/api/chat/history` | Restore earlier context before regenerating an edited question |
 
 Interactive API documentation is available at:
 
@@ -388,20 +425,26 @@ EXPOSE_SQL=true
 MAX_ROWS=50
 MAX_HISTORY_TURNS=8
 SCHEMA_CACHE_SECONDS=600
+SCHEMA_MAX_TABLES=8
+SQL_MAX_ATTEMPTS=3
 
 CF_ACCOUNT_ID=your_account_id
 CF_API_TOKEN=your_api_token
-CF_AI_MODEL=@cf/meta/llama-3.3-70b-instruct-fp8-fast
+CF_AI_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
 CF_AI_TEMPERATURE=0.1
 CF_AI_TIMEOUT_SECONDS=60
 
-DB_URL=postgresql://localhost:5432/ai_query_test
+DB_URL=postgresql://localhost:5432/banking_demo
 DB_USER=your_read_only_user
 DB_PASSWORD=your_password
-DB_SCHEMA=ai_demo
+DB_SCHEMA=core_banking
+DB_SCHEMAS=accounts,audit_compliance,cards,core_banking,customer360,deposits,digital_banking,fraud_risk,loans,payments
 DB_POOL_SIZE=5
 DB_CONNECT_TIMEOUT_SECONDS=10
 DB_STATEMENT_TIMEOUT_MS=30000
+DB_EXPLAIN_MAX_COST=100000
+DB_EXPLAIN_MAX_ROWS=1000000
+DB_EXPLAIN_MAX_JOINS=8
 
 RESTRICTED_TABLES=payroll,hr_employees
 RESTRICTED_COLUMNS=password,key_secret,ssn,national_id,card_number
@@ -443,7 +486,7 @@ cd C:\Users\Dell\Downloads\AskMe-Web\backend
 ..\.venv\Scripts\python.exe -m pytest -q
 ```
 
-The suite covers configuration parsing, SQL safety, restricted identifiers, schema filtering behavior, query-agent heuristics, runtime-skill loading, and API health.
+The current baseline is **53 passing backend tests**. The suite covers configuration parsing, SQL safety, AST policy, EXPLAIN cost limits, restricted identifiers, schema retrieval, query-agent recovery and consistency, deterministic result verification, reporting, runtime-skill loading, and API health.
 
 ### Frontend production build
 
@@ -470,16 +513,16 @@ Also test:
 
 ## 15. Known limitations
 
-- SQL validation is defense in depth but is not yet based on a full PostgreSQL AST parser.
+- SQL is parsed with SQLGlot's PostgreSQL dialect and checked against the approved catalog; this remains defense in depth rather than a complete authorization engine.
 - Conversation messages are persisted in browser storage; backend context is held in process memory.
 - Multiple backend workers do not share conversation state.
 - Audit storage is a local JSONL file rather than a centralized audit database.
-- The chart engine is intentionally lightweight and supports bar and line charts.
+- The chart engine is intentionally lightweight and supports bar, line, and interpretation-aware pie charts.
 - Excel export uses an Excel-compatible HTML `.xls` document rather than native `.xlsx` generation.
 - PDF export uses the browser print dialog.
 - Executive insights are currently deterministic ranges and row counts plus the model summary; advanced anomaly attribution is not implemented.
 - There is no user identity, SSO, RBAC, or row-level authorization layer yet.
-- There is no semantic vector catalog or business glossary retrieval yet.
+- Semantic retrieval currently uses identifiers, columns, synonyms, and foreign-key neighbors; there is no governed vector catalog or business glossary yet.
 - There is no automated golden-query correctness evaluation yet.
 - The current workflow is staged but is not implemented with LangGraph.
 
@@ -487,9 +530,8 @@ Also test:
 
 ### Phase 1: Validation and governance
 
-- PostgreSQL AST-based query parsing.
-- Allowlisted functions and schemas.
-- Query cost estimation with `EXPLAIN` before execution.
+- Expand AST policy to governed function allowlists and deeper lineage checks.
+- Tune `EXPLAIN` thresholds from production workload evidence.
 - Central audit database and searchable audit UI.
 - SSO, RBAC, and per-domain authorization.
 - PII classification and masking policies.
@@ -499,7 +541,7 @@ Also test:
 - Business glossary and metric definitions.
 - Table and column descriptions.
 - Data grain and ownership metadata.
-- Semantic schema retrieval.
+- Governed vector and business-glossary retrieval.
 - Join-path ranking.
 - Metadata freshness monitoring.
 

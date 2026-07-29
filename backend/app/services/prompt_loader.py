@@ -8,6 +8,7 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class SkillPrompts:
+    metadata_rules: str
     sql_rules: str
     summary_rules: str
 
@@ -29,6 +30,11 @@ def _extract_section(text: str, name: str) -> str:
 @lru_cache
 def load_skill_prompts(max_rows: int) -> SkillPrompts:
     text = SKILL_PATH.read_text(encoding="utf-8")
+    metadata_rules = _extract_section(text, "METADATA_RULES").replace("{{MAX_ROWS}}", str(max_rows))
     sql_rules = _extract_section(text, "SQL_RULES").replace("{{MAX_ROWS}}", str(max_rows))
     summary_rules = _extract_section(text, "SUMMARY_RULES").replace("{{MAX_ROWS}}", str(max_rows))
-    return SkillPrompts(sql_rules=sql_rules, summary_rules=summary_rules)
+    return SkillPrompts(
+        metadata_rules=metadata_rules,
+        sql_rules=sql_rules,
+        summary_rules=summary_rules,
+    )

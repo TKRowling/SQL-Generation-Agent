@@ -14,6 +14,7 @@ class ChatRequest(BaseModel):
     session_id: str = Field(min_length=8, max_length=128)
     message: str = Field(min_length=1, max_length=4000)
     force_data: bool = False
+    schema_name: str | None = Field(default=None, alias="schema")
 
     @field_validator("session_id")
     @classmethod
@@ -45,7 +46,7 @@ class ChatResponse(BaseModel):
 
 
 class ChartSpec(BaseModel):
-    type: Literal["bar", "line"]
+    type: Literal["bar", "line", "pie"]
     title: str
     x_key: str
     y_keys: list[str]
@@ -59,16 +60,23 @@ class ResetResponse(BaseModel):
     cleared: bool = True
 
 
+class HistoryReplaceRequest(BaseModel):
+    session_id: str = Field(min_length=8, max_length=128)
+    messages: list[ChatMessage] = Field(default_factory=list, max_length=16)
+
+
 class DatabasePingResponse(BaseModel):
     reachable: bool
     version: str | None = None
     database: str | None = None
     schema_name: str | None = Field(default=None, alias="schema")
+    schemas: list[str] = Field(default_factory=list)
     tables: int | None = None
     message: str | None = None
 
 
 class TablesResponse(BaseModel):
+    schema_name: str = Field(alias="schema")
     tables: list[str]
     count: int
 

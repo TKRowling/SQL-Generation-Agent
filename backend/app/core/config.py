@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     max_rows: int = 50
     max_history_turns: int = 8
     schema_cache_seconds: int = 600
+    schema_max_tables: int = 8
+    sql_max_attempts: int = 3
 
     cf_account_id: str = ""
     cf_api_token: str = ""
@@ -77,9 +79,13 @@ class Settings(BaseSettings):
     db_user: str = ""
     db_password: str = ""
     db_schema: str = "public"
+    db_schemas: str = ""
     db_pool_size: int = 5
     db_connect_timeout_seconds: int = 10
     db_statement_timeout_ms: int = 30000
+    db_explain_max_cost: float = 100000
+    db_explain_max_rows: int = 1000000
+    db_explain_max_joins: int = 8
     restricted_tables: str = "payroll,hr_employees"
     restricted_columns: str = "password,key_secret,ssn,national_id,card_number"
     audit_log_path: str = "logs/audit.jsonl"
@@ -97,6 +103,42 @@ class Settings(BaseSettings):
             raise ValueError("DB_SCHEMA must be a valid unquoted PostgreSQL schema name")
         return value
 
+    @field_validator("db_schemas")
+    @classmethod
+    def validate_db_schemas(cls, value: str) -> str:
+        names = [item.strip() for item in value.split(",") if item.strip()]
+        if any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) for name in names):
+            raise ValueError("DB_SCHEMAS must contain comma-separated unquoted PostgreSQL schema names")
+        return ",".join(dict.fromkeys(names))
+
+    @field_validator("schema_max_tables")
+    @classmethod
+    def validate_schema_max_tables(cls, value: int) -> int:
+        if not 1 <= value <= 50:
+            raise ValueError("SCHEMA_MAX_TABLES must be between 1 and 50")
+        return value
+
+    @field_validator("sql_max_attempts")
+    @classmethod
+    def validate_sql_max_attempts(cls, value: int) -> int:
+        if not 1 <= value <= 3:
+            raise ValueError("SQL_MAX_ATTEMPTS must be between 1 and 3")
+        return value
+
+    @field_validator("db_explain_max_cost")
+    @classmethod
+    def validate_explain_cost(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("DB_EXPLAIN_MAX_COST must be greater than zero")
+        return value
+
+    @field_validator("db_explain_max_rows", "db_explain_max_joins")
+    @classmethod
+    def validate_positive_guard_limits(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("EXPLAIN row and join limits must be greater than zero")
+        return value
+
     @property
     def allowed_origins(self) -> list[str]:
         return [item.strip() for item in self.cors_origins.split(",") if item.strip()]
@@ -112,6 +154,20 @@ class Settings(BaseSettings):
     @property
     def database_configured(self) -> bool:
         return bool(self.db_url)
+
+    @property
+    def allowed_schemas(self) -> tuple[str, ...]:
+        configured = [item for item in self.db_schemas.split(",") if item]
+        return tuple(dict.fromkeys([self.db_schema, *configured]))
+
+    def resolve_schema(self, requested: str | None) -> str:
+        if not requested:
+            return self.db_schema
+        matches = {name.lower(): name for name in self.allowed_schemas}
+        resolved = matches.get(requested.strip().lower())
+        if resolved is None:
+            raise ValueError("The selected schema is not approved.")
+        return resolved
 
 
 @lru_cache

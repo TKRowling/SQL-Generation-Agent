@@ -5,11 +5,15 @@ import { ReportInsights } from './ReportInsights'
 
 interface MessageCardProps {
   message: StoredMessage
+  onEdit?: (messageId: string, text: string) => Promise<void>
+  editingDisabled?: boolean
 }
 
-export function MessageCard({ message }: MessageCardProps) {
+export function MessageCard({ message, onEdit, editingDisabled = false }: MessageCardProps) {
   const isUser = message.role === 'user'
   const [copied, setCopied] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(message.text)
   const embedded = message.sql ? null : extractEmbeddedSql(message.text)
   const displayedSql = message.sql ?? embedded?.sql ?? null
   const displayedText = embedded?.answer ?? message.text
@@ -20,20 +24,66 @@ export function MessageCard({ message }: MessageCardProps) {
     window.setTimeout(() => setCopied(false), 1600)
   }
 
+  async function saveEdit() {
+    const value = draft.replace(/\s+/g, ' ').trim()
+    if (!value || value === message.text || !onEdit) {
+      setDraft(message.text)
+      setEditing(false)
+      return
+    }
+    setEditing(false)
+    await onEdit(message.id, value)
+  }
+
   return (
     <article className={`message-row ${isUser ? 'message-row-user' : 'message-row-assistant'}`}>
       {!isUser && <div className="avatar" aria-hidden="true">A</div>}
       <div className={`message-card ${message.error ? 'message-error' : ''}`}>
+        {isUser && onEdit && !editing && (
+          <button className="message-edit-button" type="button" onClick={() => { setDraft(message.text); setEditing(true) }} disabled={editingDisabled} aria-label="Edit question" title="Edit question">
+            <span aria-hidden="true">✎</span>
+          </button>
+        )}
         {!isUser && (
           <div className="message-meta">
-            <span>AskMe</span>
+            <span className="assistant-name">AskMe</span>
             {message.kind === 'data' && <span className="message-kind">Database</span>}
             {typeof message.rowCount === 'number' && message.rowCount > 0 && (
               <span className="message-count">{message.rowCount} row{message.rowCount === 1 ? '' : 's'}</span>
             )}
           </div>
         )}
-        {displayedText && <p className="message-text">{displayedText}</p>}
+        {!isUser && message.error && (
+          <div className="error-heading">
+            <span aria-hidden="true">!</span>
+            <strong>Request could not be completed</strong>
+          </div>
+        )}
+        {isUser && editing ? (
+          <form className="message-edit-form" onSubmit={(event) => { event.preventDefault(); void saveEdit() }}>
+            <textarea
+              autoFocus
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  setDraft(message.text)
+                  setEditing(false)
+                }
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault()
+                  void saveEdit()
+                }
+              }}
+              maxLength={4000}
+              aria-label="Edit question text"
+            />
+            <div className="message-edit-actions">
+              <button type="button" onClick={() => { setDraft(message.text); setEditing(false) }}>Cancel</button>
+              <button className="message-edit-save" type="submit" disabled={!draft.trim()}>Save & regenerate</button>
+            </div>
+          </form>
+        ) : displayedText && <p className="message-text">{displayedText}</p>}
         {!isUser && message.insights && message.insights.length > 0 && (
           <ReportInsights insights={message.insights} chart={message.chart ?? null} rows={message.rows ?? []} />
         )}

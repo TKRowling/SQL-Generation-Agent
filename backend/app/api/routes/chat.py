@@ -10,13 +10,20 @@ from app.core.errors import (
     ConfigurationError,
     DatabaseUnavailableError,
     ForbiddenQueryError,
+    UnsupportedDataQuestionError,
 )
 from app.core.security import require_api_key
-from app.models.api import ChatRequest, ChatResponse, ResetRequest, ResetResponse
+from app.models.api import (
+    ChatRequest,
+    ChatResponse,
+    HistoryReplaceRequest,
+    ResetRequest,
+    ResetResponse,
+)
 from app.services.history import conversation_store
 from app.services.audit import audit_service
 from app.services.query_agent import looks_like_destructive_request, query_agent
-from app.services.reporting import build_report
+from app.services.reporting import build_report_with_ai
 
 
 router = APIRouter(prefix="/chat", tags=["chat"], dependencies=[Depends(require_api_key)])
@@ -31,6 +38,10 @@ async def chat(request: ChatRequest) -> ChatResponse:
     started = time.perf_counter()
     request_id = str(uuid4())
     settings = get_settings()
+    try:
+        selected_schema = settings.resolve_schema(request.schema_name)
+    except ValueError as exc:
+        raise api_error(status.HTTP_400_BAD_REQUEST, "INVALID_SCHEMA", str(exc)) from exc
     history = await conversation_store.get(request.session_id)
 
     if looks_like_destructive_request(request.message):
@@ -45,22 +56,27 @@ async def chat(request: ChatRequest) -> ChatResponse:
             sql=None,
             request_id=request_id,
         )
-        await audit_service.record({"request_id": request_id, "session_id": request.session_id, "question": request.message, "decision": "blocked_mutation", "status": "blocked"})
+        await audit_service.record({"request_id": request_id, "session_id": request.session_id, "schema": selected_schema, "question": request.message, "decision": "blocked_mutation", "status": "blocked"})
         return response
 
     try:
-        metadata = await query_agent.answer_metadata(request.message)
+        metadata = await query_agent.answer_metadata(
+            request.message, selected_schema, history
+        )
         if metadata is not None:
             result = metadata
             kind = result.kind
         elif request.force_data:
-            result = await query_agent.answer_data_question(request.message, history)
+            result = await query_agent.answer_data_question(
+                request.message, history, selected_schema
+            )
             kind = "data"
         else:
             result = await query_agent.answer_message(
                 request.message,
                 history,
                 settings.bot_system_prompt,
+                selected_schema,
             )
             kind = result.kind
     except ForbiddenQueryError as exc:
@@ -69,6 +85,30 @@ async def chat(request: ChatRequest) -> ChatResponse:
             "FORBIDDEN_QUERY",
             "Credential fields such as passwords or secret keys cannot be queried.",
         ) from exc
+    except UnsupportedDataQuestionError as exc:
+        execution_ms = round((time.perf_counter() - started) * 1000)
+        await conversation_store.append_exchange(
+            request.session_id, request.message, str(exc)
+        )
+        await audit_service.record({
+            "request_id": request_id,
+            "session_id": request.session_id,
+            "schema": selected_schema,
+            "question": request.message,
+            "decision": "unsupported_by_schema",
+            "status": "not_executed",
+            "row_count": 0,
+            "execution_ms": execution_ms,
+        })
+        return ChatResponse(
+            kind="data",
+            answer=str(exc),
+            rows=[],
+            row_count=0,
+            sql=None,
+            request_id=request_id,
+            execution_ms=execution_ms,
+        )
     except DatabaseUnavailableError as exc:
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -94,7 +134,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
     await conversation_store.append_exchange(request.session_id, request.message, result.answer)
     sql = result.sql if settings.expose_sql else None
-    insights, chart = build_report(result.rows)
+    insights, chart = await build_report_with_ai(result.rows, request.message)
     execution_ms = round((time.perf_counter() - started) * 1000)
     response = ChatResponse(
         kind=kind,
@@ -107,11 +147,18 @@ async def chat(request: ChatRequest) -> ChatResponse:
         request_id=request_id,
         execution_ms=execution_ms,
     )
-    await audit_service.record({"request_id": request_id, "session_id": request.session_id, "question": request.message, "decision": kind, "status": "success", "sql": result.sql, "row_count": result.row_count, "execution_ms": execution_ms})
+    await audit_service.record({"request_id": request_id, "session_id": request.session_id, "schema": selected_schema, "question": request.message, "decision": kind, "status": "success", "sql": result.sql, "row_count": result.row_count, "execution_ms": execution_ms})
     return response
 
 
 @router.post("/reset", response_model=ResetResponse)
 async def reset_chat(request: ResetRequest) -> ResetResponse:
     await conversation_store.reset(request.session_id)
+    return ResetResponse()
+
+
+@router.put("/history", response_model=ResetResponse)
+async def replace_history(request: HistoryReplaceRequest) -> ResetResponse:
+    """Restore the valid prefix after a user edits an earlier question."""
+    await conversation_store.replace(request.session_id, request.messages)
     return ResetResponse()

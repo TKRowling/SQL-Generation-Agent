@@ -40,5 +40,15 @@ class ConversationStore:
         async with self._lock:
             self._histories.pop(session_id, None)
 
+    async def replace(self, session_id: str, messages: list[ChatMessage]) -> None:
+        max_messages = get_settings().max_history_turns * 2
+        safe_messages = [
+            message.model_copy()
+            for message in messages
+            if message.role in {"user", "assistant"}
+        ][-max_messages:]
+        async with self._lock:
+            self._histories[session_id] = safe_messages
+
 
 conversation_store = ConversationStore()

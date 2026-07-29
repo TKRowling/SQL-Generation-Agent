@@ -1,10 +1,10 @@
 $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$BackendPython = Join-Path $Root "backend\.venv\Scripts\python.exe"
+$BackendPython = Join-Path $Root ".venv\Scripts\python.exe"
 
 if (-not (Test-Path $BackendPython)) {
-    throw "Backend virtual environment not found. Create backend\.venv and install requirements-dev.txt first."
+    throw "Virtual environment not found. Create .venv in the project root and install backend\requirements-dev.txt."
 }
 
 if (-not (Test-Path (Join-Path $Root "backend\.env"))) {

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.config import get_settings
 from app.core.errors import ConfigurationError, DatabaseUnavailableError
@@ -40,18 +40,25 @@ async def db_ping() -> DatabasePingResponse:
     response_model=TablesResponse,
     dependencies=[Depends(require_api_key)],
 )
-async def tables() -> TablesResponse:
+async def tables(schema: str | None = Query(default=None)) -> TablesResponse:
     try:
-        names = await database_service.list_tables()
-    except (DatabaseUnavailableError, ConfigurationError, ValueError) as exc:
+        selected_schema = get_settings().resolve_schema(schema)
+        names = await database_service.list_tables(selected_schema)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_SCHEMA", "message": str(exc)},
+        ) from exc
+    except (DatabaseUnavailableError, ConfigurationError) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"code": "DATABASE_UNAVAILABLE", "message": str(exc)},
         ) from exc
-    return TablesResponse(tables=names, count=len(names))
+    return TablesResponse(schema=selected_schema, tables=names, count=len(names))
 
 
 @router.post("/schema/refresh", dependencies=[Depends(require_api_key)])
-async def refresh_schema() -> dict[str, int | bool]:
-    summary = await schema_service.get_summary(force=True)
-    return {"refreshed": True, "characters": len(summary)}
+async def refresh_schema(schema: str | None = Query(default=None)) -> dict[str, int | bool | str]:
+    selected_schema = get_settings().resolve_schema(schema)
+    summary = await schema_service.get_summary(selected_schema, force=True)
+    return {"refreshed": True, "schema": selected_schema, "characters": len(summary)}

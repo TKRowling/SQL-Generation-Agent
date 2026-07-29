@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import Any
 
 from app.core.config import get_settings
@@ -10,10 +12,47 @@ from app.services.database import database_service
 
 
 SECRET_COLUMNS = {"key_secret", "password"}
+WORD_RE = re.compile(r"[a-z0-9]+")
+SEMANTIC_SYNONYMS = {
+    "client": {"customer"},
+    "clients": {"customer"},
+    "customer": {"client"},
+    "customers": {"client"},
+    "earnings": {"income", "amount"},
+    "salary": {"income", "amount"},
+    "income": {"earnings", "amount"},
+    "office": {"branch"},
+    "location": {"branch", "address"},
+    "payment": {"transaction", "amount"},
+    "payments": {"transaction", "amount"},
+    "loan": {"application", "credit"},
+    "loans": {"application", "credit"},
+    "risk": {"score", "fraud"},
+    "balance": {"amount", "account"},
+}
+
+
+@dataclass(frozen=True)
+class SchemaCatalog:
+    columns: dict[str, frozenset[str]]
+    foreign_keys: tuple[dict[str, Any], ...]
+
+    @property
+    def table_names(self) -> tuple[str, ...]:
+        return tuple(sorted(self.columns))
 
 
 def simplify_type(value: str) -> str:
     return value.replace(" without time zone", "").replace(" with time zone", "tz").strip()
+
+
+def infer_table_definition(table_name: str) -> str:
+    subject = table_name.replace("_", " ").strip()
+    if subject.endswith(" history"):
+        return f"Stores historical {subject.removesuffix(' history')} changes and events."
+    if subject.endswith(" relationships"):
+        return f"Stores relationships between {subject.removesuffix(' relationships')} records."
+    return f"Stores records related to {subject}."
 
 
 def build_schema_summary(columns: list[dict[str, Any]], foreign_keys: list[dict[str, Any]]) -> str:
@@ -44,30 +83,82 @@ def build_schema_summary(columns: list[dict[str, Any]], foreign_keys: list[dict[
     return "\n".join(f"{table}: {', '.join(parts)}" for table, parts in grouped.items())
 
 
+def select_relevant_tables(
+    question: str,
+    catalog: SchemaCatalog,
+    max_tables: int,
+    additional_terms: str = "",
+) -> list[str]:
+    """Rank approved tables lexically, then include useful FK neighbours."""
+    searchable = f"{question} {additional_terms}".lower().replace("_", " ")
+    words = set(WORD_RE.findall(searchable))
+    semantic_words = set(words)
+    for word in words:
+        semantic_words.update(SEMANTIC_SYNONYMS.get(word, set()))
+    scores: dict[str, int] = {}
+
+    for table, columns in catalog.columns.items():
+        table_words = set(WORD_RE.findall(table.replace("_", " ")))
+        score = 0
+        if table.lower() in f"{question.lower()} {additional_terms.lower()}":
+            score += 20
+        score += 5 * len(table_words & semantic_words)
+        for column in columns:
+            column_words = set(WORD_RE.findall(column.replace("_", " ")))
+            score += min(3, len(column_words & semantic_words))
+        if score:
+            scores[table] = score
+
+    if not scores:
+        return list(catalog.table_names[:max_tables])
+
+    selected = [
+        table for table, _ in
+        sorted(scores.items(), key=lambda item: (-item[1], item[0]))[:max_tables]
+    ]
+    neighbours: list[str] = []
+    selected_set = set(selected)
+    for fk in catalog.foreign_keys:
+        table = str(fk["table_name"])
+        ref_table = str(fk["ref_table"])
+        if table in selected_set and ref_table not in selected_set:
+            neighbours.append(ref_table)
+        elif ref_table in selected_set and table not in selected_set:
+            neighbours.append(table)
+    for table in neighbours:
+        if table in catalog.columns and table not in selected_set and len(selected) < max_tables:
+            selected.append(table)
+            selected_set.add(table)
+    return selected
+
+
 class SchemaService:
     def __init__(self) -> None:
-        self._cached_text: str | None = None
-        self._cached_at = 0.0
+        self._cached_text: dict[str, str] = {}
+        self._cached_columns: dict[str, list[dict[str, Any]]] = {}
+        self._cached_foreign_keys: dict[str, list[dict[str, Any]]] = {}
+        self._cached_at: dict[str, float] = {}
         self._lock = asyncio.Lock()
 
-    async def get_summary(self, force: bool = False) -> str:
+    async def get_summary(self, schema: str | None = None, force: bool = False) -> str:
         settings = get_settings()
+        selected_schema = settings.resolve_schema(schema)
         now = time.monotonic()
         if (
             not force
-            and self._cached_text is not None
-            and now - self._cached_at < settings.schema_cache_seconds
+            and selected_schema in self._cached_text
+            and now - self._cached_at.get(selected_schema, 0) < settings.schema_cache_seconds
         ):
-            return self._cached_text
+            return self._cached_text[selected_schema]
 
         async with self._lock:
             now = time.monotonic()
             if (
                 not force
-                and self._cached_text is not None
-                and now - self._cached_at < settings.schema_cache_seconds
+                and selected_schema in self._cached_text
+                and now - self._cached_at.get(selected_schema, 0) < settings.schema_cache_seconds
             ):
-                return self._cached_text
+                return self._cached_text[selected_schema]
 
             columns = await database_service.execute_internal(
                 """
@@ -111,7 +202,7 @@ class SchemaService:
                 WHERE c.table_schema = %s
                 ORDER BY c.table_name, c.ordinal_position
                 """,
-                [settings.db_schema],
+                [selected_schema],
             )
             foreign_keys = await database_service.execute_internal(
                 """
@@ -131,7 +222,7 @@ class SchemaService:
                   AND tc.table_schema = %s
                 ORDER BY kcu.table_name, kcu.ordinal_position
                 """,
-                [settings.db_schema],
+                [selected_schema],
             )
             restricted_tables = {
                 item.strip().lower() for item in settings.restricted_tables.split(",") if item.strip()
@@ -150,9 +241,126 @@ class SchemaService:
                 and str(row["ref_table"]).lower() not in restricted_tables
             ]
             text = build_schema_summary(columns, foreign_keys)
-            self._cached_text = text
-            self._cached_at = now
+            self._cached_text[selected_schema] = text
+            self._cached_columns[selected_schema] = columns
+            self._cached_foreign_keys[selected_schema] = foreign_keys
+            self._cached_at[selected_schema] = now
             return text
+
+    async def get_catalog(self, schema: str | None = None, force: bool = False) -> SchemaCatalog:
+        selected_schema = get_settings().resolve_schema(schema)
+        await self.get_summary(selected_schema, force=force)
+        grouped: dict[str, set[str]] = defaultdict(set)
+        for column in self._cached_columns[selected_schema]:
+            grouped[str(column["table_name"])].add(str(column["column_name"]))
+        return SchemaCatalog(
+            columns={table: frozenset(columns) for table, columns in grouped.items()},
+            foreign_keys=tuple(dict(row) for row in self._cached_foreign_keys[selected_schema]),
+        )
+
+    async def get_table_definitions(self, schema: str | None = None) -> list[dict[str, Any]]:
+        """Return governed comments when present and clearly marked inferred purposes otherwise."""
+        selected_schema = get_settings().resolve_schema(schema)
+        await self.get_summary(selected_schema)
+        catalog = await self.get_catalog(selected_schema)
+        comments = await database_service.execute_internal(
+            """
+            SELECT c.relname AS table_name,
+                   obj_description(c.oid, 'pg_class') AS description
+            FROM pg_catalog.pg_class c
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = %s
+              AND c.relkind = 'r'
+            ORDER BY c.relname
+            """,
+            [selected_schema],
+        )
+        comment_map = {
+            str(row["table_name"]): str(row["description"]).strip()
+            for row in comments
+            if row.get("description")
+        }
+        return [
+            {
+                "table_name": table,
+                "definition": comment_map.get(table) or infer_table_definition(table),
+                "definition_source": "database comment" if table in comment_map else "inferred from table name",
+                "example_columns": ", ".join(sorted(catalog.columns[table])[:8]),
+            }
+            for table in catalog.table_names
+        ]
+
+    async def get_metadata_context(self, question: str, schema: str | None = None) -> str:
+        """Build a metadata-only context for general schema explanations."""
+        selected_schema = get_settings().resolve_schema(schema)
+        relevant = await self.get_relevant_summary(question, schema=selected_schema)
+        definitions = await self.get_table_definitions(selected_schema)
+        column_comments = await database_service.execute_internal(
+            """
+            SELECT c.relname AS table_name,
+                   a.attname AS column_name,
+                   col_description(c.oid, a.attnum) AS description
+            FROM pg_catalog.pg_class c
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid
+            WHERE n.nspname = %s
+              AND c.relkind = 'r'
+              AND a.attnum > 0
+              AND NOT a.attisdropped
+              AND col_description(c.oid, a.attnum) IS NOT NULL
+            ORDER BY c.relname, a.attnum
+            """,
+            [selected_schema],
+        )
+        definition_lines = [
+            f"{row['table_name']}: {row['definition']} "
+            f"[source: {row['definition_source']}]"
+            for row in definitions
+        ]
+        comment_lines = [
+            f"{row['table_name']}.{row['column_name']}: {row['description']}"
+            for row in column_comments
+        ]
+        return (
+            f"Selected schema: {selected_schema}\n"
+            f"{relevant}\n"
+            "Table definitions:\n"
+            + "\n".join(definition_lines)
+            + "\nOfficial column comments:\n"
+            + ("\n".join(comment_lines) if comment_lines else "(none)")
+        )
+
+    async def get_relevant_summary(
+        self,
+        question: str,
+        *,
+        schema: str | None = None,
+        additional_terms: str = "",
+        max_tables: int | None = None,
+        force: bool = False,
+    ) -> str:
+        settings = get_settings()
+        selected_schema = settings.resolve_schema(schema)
+        await self.get_summary(selected_schema, force=force)
+        catalog = await self.get_catalog(selected_schema)
+        limit = max(1, max_tables or settings.schema_max_tables)
+        selected = select_relevant_tables(question, catalog, limit, additional_terms)
+        selected_set = set(selected)
+        columns = [
+            row for row in self._cached_columns[selected_schema]
+            if str(row["table_name"]) in selected_set
+        ]
+        foreign_keys = [
+            row for row in self._cached_foreign_keys[selected_schema]
+            if str(row["table_name"]) in selected_set
+            and str(row["ref_table"]) in selected_set
+        ]
+        inventory = ", ".join(catalog.table_names)
+        summary = build_schema_summary(columns, foreign_keys)
+        return (
+            f"Approved table inventory (names only): {inventory}\n"
+            f"Relevant approved table schemas ({len(selected)}):\n{summary}"
+        )
 
 
 schema_service = SchemaService()

@@ -1,6 +1,6 @@
 import pytest
 
-from app.core.config import parse_db_url
+from app.core.config import Settings, parse_db_url
 
 
 def test_parse_jdbc_url() -> None:
@@ -38,3 +38,15 @@ def test_reads_sslmode() -> None:
 def test_rejects_mysql_url() -> None:
     with pytest.raises(ValueError):
         parse_db_url("mysql://reader:secret@localhost/mydb")
+
+
+def test_resolves_only_approved_schemas() -> None:
+    settings = Settings(
+        db_schema="finance",
+        db_schemas="finance,loans,cards",
+        _env_file=None,
+    )
+    assert settings.allowed_schemas == ("finance", "loans", "cards")
+    assert settings.resolve_schema("LOANS") == "loans"
+    with pytest.raises(ValueError, match="not approved"):
+        settings.resolve_schema("payroll")

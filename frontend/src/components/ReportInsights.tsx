@@ -19,6 +19,7 @@ export function ReportInsights({ insights, chart, rows }: Props) {
 function MiniChart({ chart, rows }: { chart: ChartSpec; rows: ResultRow[] }) {
   const key = chart.y_keys[0]
   if (!key) return null
+  if (chart.type === 'pie') return <PieChart chart={chart} rows={rows.slice(0, 8)} valueKey={key} />
   const values = rows.map((row) => Number(row[key])).filter(Number.isFinite)
   if (values.length < 2) return null
   const max = Math.max(...values, 1)
@@ -51,4 +52,53 @@ function MiniChart({ chart, rows }: { chart: ChartSpec; rows: ResultRow[] }) {
       </div>
     </div>
   )
+}
+
+const PIE_COLORS = ['#466fd0', '#25a18e', '#f0a44b', '#8a63d2', '#e26178', '#57a7d8', '#7cab55', '#c47b45']
+
+function PieChart({ chart, rows, valueKey }: { chart: ChartSpec; rows: ResultRow[]; valueKey: string }) {
+  const slices = rows
+    .map((row, index) => ({
+      label: String(row[chart.x_key] ?? `Category ${index + 1}`),
+      value: Number(row[valueKey]),
+      color: PIE_COLORS[index % PIE_COLORS.length]!,
+    }))
+    .filter((slice) => Number.isFinite(slice.value) && slice.value >= 0)
+  const total = slices.reduce((sum, slice) => sum + slice.value, 0)
+  if (slices.length < 2 || total <= 0) return null
+
+  let cursor = 0
+  const stops = slices.map((slice) => {
+    const start = cursor
+    cursor += slice.value / total * 100
+    return `${slice.color} ${start.toFixed(2)}% ${cursor.toFixed(2)}%`
+  })
+
+  return (
+    <div className="mini-chart pie-chart" role="img" aria-label={chart.title}>
+      <div className="chart-title">{chart.title}</div>
+      <div className="pie-layout">
+        <div className="pie-graphic" style={{ background: `conic-gradient(${stops.join(', ')})` }}>
+          <div className="pie-center">
+            <strong>{formatCompact(total)}</strong>
+            <span>Total</span>
+          </div>
+        </div>
+        <div className="pie-legend">
+          {slices.map((slice) => (
+            <div className="pie-legend-item" key={slice.label}>
+              <span className="pie-swatch" style={{ background: slice.color }} />
+              <span className="pie-label" title={slice.label}>{slice.label}</span>
+              <strong>{(slice.value / total * 100).toFixed(1)}%</strong>
+              <small>{slice.value.toLocaleString('en-US')}</small>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function formatCompact(value: number): string {
+  return Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(value)
 }

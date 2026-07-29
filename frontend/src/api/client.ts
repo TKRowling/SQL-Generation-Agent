@@ -66,10 +66,20 @@ export function resetChat(sessionId: string): Promise<{ cleared: boolean }> {
   })
 }
 
+export function replaceChatHistory(
+  sessionId: string,
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+): Promise<{ cleared: boolean }> {
+  return request('/api/chat/history', {
+    method: 'PUT',
+    body: JSON.stringify({ session_id: sessionId, messages }),
+  })
+}
+
 export function pingDatabase(): Promise<DatabasePingResponse> {
   return request('/api/db/ping')
 }
 
-export function fetchTables(): Promise<TablesResponse> {
-  return request('/api/db/tables')
+export function fetchTables(schema: string): Promise<TablesResponse> {
+  return request(`/api/db/tables?schema=${encodeURIComponent(schema)}`)
 }

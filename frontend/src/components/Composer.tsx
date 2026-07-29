@@ -3,9 +3,10 @@ import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 
 interface ComposerProps {
   disabled: boolean
   onSend: (message: string, forceData: boolean) => Promise<void>
+  schema: string
 }
 
-export function Composer({ disabled, onSend }: ComposerProps) {
+export function Composer({ disabled, onSend, schema }: ComposerProps) {
   const [value, setValue] = useState('')
   const [forceData, setForceData] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -45,6 +46,9 @@ export function Composer({ disabled, onSend }: ComposerProps) {
         disabled={disabled}
         aria-label="Message"
       />
+      <div className="composer-context" aria-live="polite">
+        Querying <strong>{schema || 'no schema selected'}</strong>
+      </div>
       <div className="composer-footer">
         <label className="force-data-toggle">
           <input

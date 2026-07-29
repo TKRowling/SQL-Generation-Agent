@@ -21,3 +21,7 @@ class AIUnavailableError(AskMeError):
 
 class AIResponseError(AskMeError):
     pass
+
+
+class UnsupportedDataQuestionError(AskMeError):
+    """The approved selected schema cannot support the requested data question."""
