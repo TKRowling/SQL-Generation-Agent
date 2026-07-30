@@ -11,8 +11,9 @@ The current implementation uses:
 - React and TypeScript
 - FastAPI and Pydantic
 - PostgreSQL and Psycopg
-- Cloudflare Workers AI
-- `@cf/meta/llama-3.1-8b-instruct-fast` (recommended pilot model)
+- Ollama local AI service without an API key
+- `llama3.1:8b` (default pilot model)
+- Optional Cloudflare Workers AI provider
 
 Docker, Kubernetes, LangGraph, and a true multi-agent graph are not required for the current local pilot.
 
@@ -43,7 +44,7 @@ User question
   → POST /api/chat
   → Deterministic metadata/data router
   → Semantic retrieval from the approved schema catalog
-  → Cloudflare AI plans and generates one SELECT
+  → Configured AI provider plans and generates one SELECT
   → SQLGlot AST policy checker
   → PostgreSQL EXPLAIN cost guard
   → Read-only PostgreSQL execution
@@ -89,9 +90,11 @@ DB_PASSWORD=your_password
 DB_SCHEMA=core_banking
 DB_SCHEMAS=accounts,audit_compliance,cards,core_banking,customer360,deposits,digital_banking,fraud_risk,loans,payments
 
-CF_ACCOUNT_ID=your_cloudflare_account_id
-CF_API_TOKEN=your_cloudflare_api_token
-CF_AI_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
+AI_PROVIDER=ollama
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=llama3.1:8b
+OLLAMA_TEMPERATURE=0.1
+OLLAMA_TIMEOUT_SECONDS=120
 
 EXPOSE_SQL=true
 MAX_ROWS=50
@@ -192,7 +195,7 @@ The summary rules must require:
 
 ### Step 5 — Integrate the model
 
-Create a Workers AI client that sends:
+Create a provider-based AI client that sends:
 
 - Runtime skill instructions
 - Approved table inventory and progressively selected relevant schemas
@@ -205,7 +208,7 @@ Primary file:
 backend/app/services/ai.py
 ```
 
-Cloudflare returns text containing either SQL or a business summary. The model never receives database credentials and cannot execute SQL directly.
+Ollama receives `POST /api/chat` with `stream: false` and returns the assistant text in `message.content`. No `Authorization` header or API key is required. Cloudflare can remain as an explicitly selected alternative. The model never receives database credentials and cannot execute SQL directly.
 
 ### Step 6 — Build the query-agent workflow
 
@@ -247,13 +250,13 @@ Example:
 ```text
 “List all tables”
 → query PostgreSQL metadata directly
-→ no Cloudflare call
+→ no AI-provider call
 ```
 
 ```text
 “Delete the accounts table”
 → return refusal immediately
-→ no Cloudflare call
+→ no AI-provider call
 → no PostgreSQL query
 ```
 
@@ -495,7 +498,7 @@ npm.cmd run build
 Current evidence:
 
 ```text
-53 backend tests passed
+57 backend tests passed
 Frontend production build passed
 Runtime skill validation passed
 ```

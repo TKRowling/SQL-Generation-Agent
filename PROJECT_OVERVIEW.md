@@ -80,8 +80,8 @@ This improves correctness, reduces latency, and avoids unnecessary AI usage.
 | Backend API | FastAPI, Pydantic |
 | Database | PostgreSQL through Psycopg 3 connection pooling |
 | SQL policy parser | SQLGlot with the PostgreSQL dialect |
-| AI provider | Cloudflare Workers AI REST API |
-| AI model | Environment-configurable; `@cf/meta/llama-3.1-8b-instruct-fast` is recommended for the controlled pilot |
+| AI provider | Ollama local REST API by default; optional Cloudflare Workers AI |
+| AI model | Environment-configurable; `llama3.1:8b` is the default Ollama pilot model |
 | HTTP client | HTTPX |
 | Backend tests | Pytest, pytest-asyncio |
 | Browser persistence | `localStorage` |
@@ -190,7 +190,7 @@ The query agent decides whether the message is:
 
 ### Step 6: Generate SQL
 
-For a database question, Cloudflare Workers AI receives:
+For a database question, the configured AI provider receives:
 
 - The SQL-generation rules from the runtime skill.
 - The approved table inventory and detailed schemas for only the most relevant tables.
@@ -328,17 +328,25 @@ The skill improves model behavior but does not replace deterministic security co
 
 ## 9. AI model
 
-The model is selected through the environment. The tested 8B Fast model is recommended for the controlled pilot:
+The provider and model are selected through the environment. Ollama is the default local provider and requires no API key:
 
 ```env
-CF_AI_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
+AI_PROVIDER=ollama
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=llama3.1:8b
+OLLAMA_TEMPERATURE=0.1
+OLLAMA_TIMEOUT_SECONDS=120
 ```
 
-The backend calls the Cloudflare Workers AI REST endpoint:
+The backend calls:
 
 ```text
-POST /client/v4/accounts/{account_id}/ai/run/{model}
+POST {OLLAMA_BASE_URL}/api/chat
 ```
+
+The request uses `stream: false`; response text is read from `message.content`.
+No `Authorization` header is sent. Cloudflare Workers AI remains available only when
+`AI_PROVIDER=cloudflare` is selected and its credentials are configured.
 
 The model performs three bounded tasks:
 
@@ -376,7 +384,7 @@ Restricted identifiers are removed during schema discovery and checked again bef
 MAX_ROWS=50
 DB_CONNECT_TIMEOUT_SECONDS=10
 DB_STATEMENT_TIMEOUT_MS=30000
-CF_AI_TIMEOUT_SECONDS=60
+OLLAMA_TIMEOUT_SECONDS=120
 ```
 
 ### API protection
@@ -428,11 +436,11 @@ SCHEMA_CACHE_SECONDS=600
 SCHEMA_MAX_TABLES=8
 SQL_MAX_ATTEMPTS=3
 
-CF_ACCOUNT_ID=your_account_id
-CF_API_TOKEN=your_api_token
-CF_AI_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
-CF_AI_TEMPERATURE=0.1
-CF_AI_TIMEOUT_SECONDS=60
+AI_PROVIDER=ollama
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=llama3.1:8b
+OLLAMA_TEMPERATURE=0.1
+OLLAMA_TIMEOUT_SECONDS=120
 
 DB_URL=postgresql://localhost:5432/banking_demo
 DB_USER=your_read_only_user
@@ -486,7 +494,7 @@ cd C:\Users\Dell\Downloads\AskMe-Web\backend
 ..\.venv\Scripts\python.exe -m pytest -q
 ```
 
-The current baseline is **53 passing backend tests**. The suite covers configuration parsing, SQL safety, AST policy, EXPLAIN cost limits, restricted identifiers, schema retrieval, query-agent recovery and consistency, deterministic result verification, reporting, runtime-skill loading, and API health.
+The current baseline is **57 passing backend tests**. The suite covers provider routing and keyless Ollama requests, configuration parsing, SQL safety, AST policy, EXPLAIN cost limits, restricted identifiers, schema retrieval, query-agent recovery and consistency, deterministic result verification, reporting, runtime-skill loading, and API health.
 
 ### Frontend production build
 

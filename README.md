@@ -6,7 +6,7 @@ AskMe Web is a React and FastAPI replacement for the original Telegram text-to-S
 
 - Frontend: React, TypeScript, Vite
 - Backend: FastAPI, Pydantic, Pydantic Settings
-- AI: Cloudflare Workers AI REST API (environment-configurable model; 8B Fast recommended for the pilot)
+- AI: Ollama local REST API by default, with optional Cloudflare Workers AI
 - Database: PostgreSQL through `psycopg` and `psycopg-pool`
 - SQL AST: SQLGlot with the PostgreSQL dialect
 - Runtime skill: `backend/app/skills/askme-data-assistant/SKILL.md`
@@ -41,7 +41,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for component and trust-boundary details.
 - Node.js 20.19 or newer
 - A running PostgreSQL server
 - A PostgreSQL database and login role
-- Cloudflare account ID and Workers AI API token
+- Ollama installed locally or reachable over the network
 
 ## 1. Configure a local PostgreSQL connection
 
@@ -84,13 +84,14 @@ For local connections that explicitly disable TLS:
 DB_URL=postgresql://localhost:5432/askme?sslmode=disable
 ```
 
-Complete the Cloudflare values in the same file:
+Configure the Ollama provider in the same file:
 
 ```env
-CF_ACCOUNT_ID=your_account_id
-CF_API_TOKEN=your_api_token
-CF_AI_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
-CF_AI_TEMPERATURE=0.1
+AI_PROVIDER=ollama
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=llama3.1:8b
+OLLAMA_TEMPERATURE=0.1
+OLLAMA_TIMEOUT_SECONDS=120
 ```
 
 Useful database settings:
@@ -208,7 +209,7 @@ python -m app.scripts.ask "how many documents were created in the last 7 days"
 
 ## Tests
 
-Current verification baseline: 51 backend tests pass, the frontend production build passes, and the runtime skill validates.
+Current verification baseline: 57 backend tests pass, the frontend production build passes, and the runtime skill validates.
 
 Backend:
 
@@ -264,7 +265,7 @@ Keep these markers unchanged when editing the skill:
 ## Security notes
 
 - Prefer a dedicated role with only `CONNECT`, schema `USAGE`, and table `SELECT` permissions.
-- Keep database and Cloudflare credentials only in `backend/.env`.
+- Keep database credentials and any optional external-provider credentials only in `backend/.env`.
 - Keep `EXPOSE_SQL=false` outside developer debugging.
 - The backend adds a row cap, a read-only session setting, and a query timeout.
 - Application checks cannot make a highly privileged PostgreSQL role safe.

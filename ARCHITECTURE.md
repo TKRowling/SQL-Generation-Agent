@@ -14,7 +14,7 @@ React UI
   -> POST /api/chat
   -> FastAPI validation, request ID, policy guard, and intent routing
   -> Semantic retrieval over approved PostgreSQL metadata
-  -> Cloudflare Workers AI plans and proposes one SELECT statement
+  -> Configured AI provider plans and proposes one SELECT statement
   -> Full-catalog recheck for model UNSUPPORTED claims
   -> SQLGlot PostgreSQL AST policy checker
   -> PostgreSQL EXPLAIN cost guard
@@ -26,6 +26,49 @@ React UI
   -> Audit event
   -> React report with answer, chart, table, SQL, and exports
 ```
+
+## Chat architecture diagram
+
+```mermaid
+flowchart TD
+    U[Business user] --> UI[React chat UI]
+    UI -->|POST /api/chat| API[FastAPI chat endpoint]
+
+    API --> SAFE{Intent and policy guard}
+    SAFE -->|Mutation request| BLOCK[Return read-only refusal]
+    SAFE -->|Metadata question| META[Metadata explanation]
+    SAFE -->|Data question| RETRIEVE[Semantic schema retrieval]
+
+    META --> CATALOG[(Approved PostgreSQL metadata)]
+    CATALOG --> METAANSWER[Grounded metadata answer]
+
+    RETRIEVE --> CATALOG
+    RETRIEVE --> PLAN[8B SQL planning and generation]
+    PLAN --> AST[SQLGlot AST policy checker]
+    AST -->|Rejected but correctable| RETRY[Bounded correction]
+    AST -->|Approved SELECT| COST[EXPLAIN cost guard]
+    COST -->|Rejected but correctable| RETRY
+    RETRY -->|Maximum 3 attempts| PLAN
+
+    COST -->|Approved plan| EXEC[Read-only PostgreSQL execution]
+    EXEC --> VERIFY[Deterministic result verification]
+    VERIFY -->|Invalid result shape| RETRY
+    VERIFY -->|Verified rows| SUMMARY[Grounded LLM business summary]
+    SUMMARY --> REPORT[Validated insights, chart, table and exports]
+
+    BLOCK --> RESPONSE[Chat response]
+    METAANSWER --> RESPONSE
+    REPORT --> RESPONSE
+    RESPONSE -->|JSON response| UI
+
+    API --> AUDIT[(Audit log)]
+    EXEC --> AUDIT
+    RESPONSE --> AUDIT
+```
+
+The model proposes SQL and business language, but it does not control routing,
+authorization, cost approval, execution, result verification, reporting validation,
+or audit logging. Every retry returns through the same deterministic controls.
 
 ## Agent stages
 
@@ -53,7 +96,7 @@ Detailed metadata is bounded by `SCHEMA_MAX_TABLES` (default `8`). Retrieval com
 
 ### 3. SQL generation
 
-Cloudflare Workers AI receives the runtime rules from `SKILL.md`, approved metadata, relevant conversation context, and the current question. It must propose exactly one PostgreSQL `SELECT`.
+The configured AI provider receives the runtime rules from `SKILL.md`, approved metadata, relevant conversation context, and the current question. Ollama is the default provider and is called through its local `/api/chat` endpoint without an API key. It must propose exactly one PostgreSQL `SELECT`.
 
 Conversation context is deliberately selective:
 
@@ -127,7 +170,7 @@ The current UI also provides a collapsible history sidebar, per-conversation sch
 | Cost guard | `backend/app/services/cost_guard.py` | EXPLAIN plan thresholds |
 | Result verifier | `backend/app/services/result_verifier.py` | Post-execution invariant checks |
 | Database service | `backend/app/services/database.py` | Read-only pool and execution |
-| AI client | `backend/app/services/ai.py` | Cloudflare Workers AI calls |
+| AI client | `backend/app/services/ai.py` | Ollama/Cloudflare provider routing |
 | Runtime skill | `backend/app/skills/askme-data-assistant/SKILL.md` | SQL and summary rules |
 | Reporting service | `backend/app/services/reporting.py` | Insights, AI chart planning, validation, and fallback |
 | Audit service | `backend/app/services/audit.py` | Append-only pilot audit records |
@@ -140,13 +183,24 @@ The current UI also provides a collapsible history sidebar, per-conversation sch
 
 ## Model configuration
 
-The model is environment-configurable. The tested 8B Fast model is recommended for the controlled pilot:
+The provider and model are environment-configurable. Ollama is the default and does not require an API key:
 
 ```env
+AI_PROVIDER=ollama
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=llama3.1:8b
+OLLAMA_TEMPERATURE=0.1
+OLLAMA_TIMEOUT_SECONDS=120
+```
+
+Cloudflare remains an optional provider:
+
+```env
+AI_PROVIDER=cloudflare
 CF_AI_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
 ```
 
-The previous 70B model remains a comparison candidate, not an automatic fallback.
+There is no automatic provider fallback. This prevents an unavailable local service from silently sending schema metadata or query results to an external provider.
 
 ## Trust boundaries
 

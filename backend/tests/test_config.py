@@ -50,3 +50,22 @@ def test_resolves_only_approved_schemas() -> None:
     assert settings.resolve_schema("LOANS") == "loans"
     with pytest.raises(ValueError, match="not approved"):
         settings.resolve_schema("payroll")
+
+
+def test_ollama_is_configured_without_api_key() -> None:
+    settings = Settings(
+        ai_provider="ollama",
+        ollama_base_url="http://127.0.0.1:11434/",
+        ollama_model="llama3.1:8b",
+        cf_account_id="",
+        cf_api_token="",
+        _env_file=None,
+    )
+    assert settings.ollama_base_url == "http://127.0.0.1:11434"
+    assert settings.ai_configured
+    assert not settings.cloudflare_configured
+
+
+def test_rejects_unknown_ai_provider() -> None:
+    with pytest.raises(ValueError, match="AI_PROVIDER"):
+        Settings(ai_provider="unknown", _env_file=None)

@@ -19,7 +19,7 @@ app = FastAPI(
     title=settings.app_name,
     version="1.0.0",
     description=(
-        "Read-only natural-language PostgreSQL assistant using Cloudflare Workers AI. "
+        "Read-only natural-language PostgreSQL assistant using a configurable AI provider. "
         "The AI proposes SQL but never receives database credentials or direct DB access."
     ),
     lifespan=lifespan,

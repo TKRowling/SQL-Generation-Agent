@@ -86,6 +86,8 @@ class HealthResponse(BaseModel):
     app: str
     environment: str
     database_configured: bool
+    ai_provider: Literal["ollama", "cloudflare"]
+    ai_configured: bool
     cloudflare_configured: bool
 
 
