@@ -88,10 +88,17 @@ Configure the Ollama provider in the same file:
 
 ```env
 OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_CHAT_PATH=/api/chat
 OLLAMA_MODEL=llama3.1:8b
 OLLAMA_TEMPERATURE=0.1
 OLLAMA_TIMEOUT_SECONDS=120
+OLLAMA_TRUST_ENV=false
 ```
+
+Verify Ollama independently through `GET /api/ai/ping`. For a service mounted
+behind a reverse-proxy prefix, keep that prefix in `OLLAMA_BASE_URL`, for example
+`http://10.123.0.218:8080/ollama`. Keep `OLLAMA_TRUST_ENV=false` for localhost
+or private-network addresses unless the service must be reached through an OS proxy.
 
 Useful database settings:
 
@@ -208,7 +215,7 @@ python -m app.scripts.ask "how many documents were created in the last 7 days"
 
 ## Tests
 
-Current verification baseline: 56 backend tests pass, the frontend production build passes, and the runtime skill validates.
+Current verification baseline: 57 backend tests pass, the frontend production build passes, and the runtime skill validates.
 
 Backend:
 
@@ -234,6 +241,7 @@ npm run build
 | `POST` | `/api/chat/reset` | Clear one browser session's backend memory |
 | `PUT` | `/api/chat/history` | Restore the valid conversation prefix after editing a question |
 | `GET` | `/api/db/ping` | Test the PostgreSQL connection |
+| `GET` | `/api/ai/ping` | Test Ollama reachability and model availability |
 | `GET` | `/api/db/tables?schema=finance` | List tables in one approved selected schema |
 | `POST` | `/api/schema/refresh?schema=finance` | Refresh one approved schema catalog |
 

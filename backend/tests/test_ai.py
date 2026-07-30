@@ -35,3 +35,21 @@ async def test_ollama_rejects_missing_text_output() -> None:
     client = OllamaClient(transport=transport)
     with pytest.raises(Exception, match="did not contain text output"):
         await client.chat([ChatMessage(role="user", content="Generate SQL")])
+
+
+@pytest.mark.asyncio
+async def test_ollama_ping_reports_model_inventory() -> None:
+    transport = httpx.MockTransport(
+        lambda request: (
+            httpx.Response(
+                200,
+                json={"models": [{"name": "llama3.1:8b"}]},
+            )
+            if request.url.path == "/api/tags"
+            else httpx.Response(404)
+        )
+    )
+    result = await OllamaClient(transport=transport).ping()
+    assert result["reachable"] is True
+    assert result["model_available"] is True
+    assert result["available_models"] == ["llama3.1:8b"]

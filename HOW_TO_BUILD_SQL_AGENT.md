@@ -90,9 +90,11 @@ DB_SCHEMA=core_banking
 DB_SCHEMAS=accounts,audit_compliance,cards,core_banking,customer360,deposits,digital_banking,fraud_risk,loans,payments
 
 OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_CHAT_PATH=/api/chat
 OLLAMA_MODEL=llama3.1:8b
 OLLAMA_TEMPERATURE=0.1
 OLLAMA_TIMEOUT_SECONDS=120
+OLLAMA_TRUST_ENV=false
 
 EXPOSE_SQL=true
 MAX_ROWS=50
@@ -496,7 +498,7 @@ npm.cmd run build
 Current evidence:
 
 ```text
-56 backend tests passed
+57 backend tests passed
 Frontend production build passed
 Runtime skill validation passed
 ```
@@ -507,6 +509,7 @@ Runtime skill validation passed
 |---|---|---|
 | `GET` | `/api/health` | Check backend and configuration |
 | `GET` | `/api/db/ping` | Check PostgreSQL connection |
+| `GET` | `/api/ai/ping` | Check Ollama connection and configured model |
 | `GET` | `/api/db/tables` | List approved tables |
 | `POST` | `/api/schema/refresh` | Refresh schema metadata |
 | `POST` | `/api/chat` | Run the complete SQL Agent flow |

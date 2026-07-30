@@ -187,9 +187,11 @@ The Ollama model and service URL are environment-configurable. Ollama does not r
 
 ```env
 OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_CHAT_PATH=/api/chat
 OLLAMA_MODEL=llama3.1:8b
 OLLAMA_TEMPERATURE=0.1
 OLLAMA_TIMEOUT_SECONDS=120
+OLLAMA_TRUST_ENV=false
 ```
 
 There is no external-provider fallback. If Ollama is unavailable, AskMe returns an AI-service error instead of sending schema metadata or query results elsewhere.

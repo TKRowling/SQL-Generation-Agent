@@ -59,4 +59,6 @@ def test_ollama_is_configured_without_api_key() -> None:
         _env_file=None,
     )
     assert settings.ollama_base_url == "http://127.0.0.1:11434"
+    assert settings.ollama_chat_path == "/api/chat"
+    assert settings.ollama_trust_env is False
     assert settings.ai_configured

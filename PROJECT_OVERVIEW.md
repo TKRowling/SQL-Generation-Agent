@@ -332,9 +332,11 @@ The provider and model are selected through the environment. Ollama is the defau
 
 ```env
 OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_CHAT_PATH=/api/chat
 OLLAMA_MODEL=llama3.1:8b
 OLLAMA_TEMPERATURE=0.1
 OLLAMA_TIMEOUT_SECONDS=120
+OLLAMA_TRUST_ENV=false
 ```
 
 The backend calls:
@@ -405,6 +407,7 @@ Protect this file as sensitive operational data because it contains user questio
 |---|---|---|
 | `GET` | `/api/health` | Application and configuration health |
 | `GET` | `/api/db/ping` | Database reachability and metadata |
+| `GET` | `/api/ai/ping` | Ollama reachability and configured-model availability |
 | `GET` | `/api/db/tables` | Approved base tables in the configured schema |
 | `POST` | `/api/schema/refresh` | Refresh cached schema metadata |
 | `POST` | `/api/chat` | Execute the query-agent workflow |
@@ -435,9 +438,11 @@ SCHEMA_MAX_TABLES=8
 SQL_MAX_ATTEMPTS=3
 
 OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_CHAT_PATH=/api/chat
 OLLAMA_MODEL=llama3.1:8b
 OLLAMA_TEMPERATURE=0.1
 OLLAMA_TIMEOUT_SECONDS=120
+OLLAMA_TRUST_ENV=false
 
 DB_URL=postgresql://localhost:5432/banking_demo
 DB_USER=your_read_only_user
@@ -491,7 +496,7 @@ cd C:\Users\Dell\Downloads\AskMe-Web\backend
 ..\.venv\Scripts\python.exe -m pytest -q
 ```
 
-The current baseline is **56 passing backend tests**. The suite covers keyless Ollama requests, configuration parsing, SQL safety, AST policy, EXPLAIN cost limits, restricted identifiers, schema retrieval, query-agent recovery and consistency, deterministic result verification, reporting, runtime-skill loading, and API health.
+The current baseline is **57 passing backend tests**. The suite covers keyless Ollama requests and health probing, configuration parsing, SQL safety, AST policy, EXPLAIN cost limits, restricted identifiers, schema retrieval, query-agent recovery and consistency, deterministic result verification, reporting, runtime-skill loading, and API health.
 
 ### Frontend production build
 

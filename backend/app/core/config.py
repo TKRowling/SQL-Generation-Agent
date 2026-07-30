@@ -70,9 +70,11 @@ class Settings(BaseSettings):
     sql_max_attempts: int = 3
 
     ollama_base_url: str = "http://127.0.0.1:11434"
+    ollama_chat_path: str = "/api/chat"
     ollama_model: str = "llama3.1:8b"
     ollama_temperature: float = 0.1
     ollama_timeout_seconds: float = 120
+    ollama_trust_env: bool = False
 
     db_url: str = ""
     db_user: str = ""
@@ -109,6 +111,14 @@ class Settings(BaseSettings):
         if not re.match(r"^https?://", url):
             raise ValueError("OLLAMA_BASE_URL must start with http:// or https://")
         return url
+
+    @field_validator("ollama_chat_path")
+    @classmethod
+    def validate_ollama_chat_path(cls, value: str) -> str:
+        path = "/" + value.strip().strip("/")
+        if ".." in path or not re.fullmatch(r"/[A-Za-z0-9_./-]+", path):
+            raise ValueError("OLLAMA_CHAT_PATH must be a safe URL path")
+        return path
 
     @field_validator("ollama_model")
     @classmethod

@@ -1,3 +1,4 @@
+import logging
 import time
 from uuid import uuid4
 
@@ -27,6 +28,7 @@ from app.services.reporting import build_report_with_ai
 
 
 router = APIRouter(prefix="/chat", tags=["chat"], dependencies=[Depends(require_api_key)])
+logger = logging.getLogger(__name__)
 
 
 def api_error(status_code: int, code: str, message: str) -> HTTPException:
@@ -116,10 +118,16 @@ async def chat(request: ChatRequest) -> ChatResponse:
             "The PostgreSQL database is unreachable. Check that PostgreSQL is running and verify the host, port, database, user, and password.",
         ) from exc
     except AIUnavailableError as exc:
+        logger.warning("Ollama request failed: %s", exc)
+        message = (
+            str(exc)
+            if settings.app_env.lower() == "development"
+            else "The Ollama service is temporarily unavailable."
+        )
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "AI_UNAVAILABLE",
-            "The AI service is temporarily unavailable or rate-limited.",
+            message,
         ) from exc
     except ConfigurationError as exc:
         raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "NOT_CONFIGURED", str(exc)) from exc
