@@ -6,7 +6,7 @@ from typing import Any
 
 from app.core.errors import AIResponseError, AIUnavailableError
 from app.models.api import ChartSpec, ChatMessage
-from app.services.ai import workers_ai
+from app.services.ai import ai_client
 
 
 DATE_RE = re.compile(r"date|time|month|year|week|day", re.IGNORECASE)
@@ -114,7 +114,7 @@ async def build_report_with_ai(
         ),
     ]
     try:
-        raw = (await workers_ai.chat(messages)).strip()
+        raw = (await ai_client.chat(messages)).strip()
         fenced = re.search(r"```(?:json)?\s*(.*?)```", raw, re.IGNORECASE | re.DOTALL)
         proposal = json.loads(fenced.group(1) if fenced else raw)
         return insights, validate_chart_proposal(proposal, rows, question)

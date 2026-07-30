@@ -69,14 +69,6 @@ class Settings(BaseSettings):
     schema_max_tables: int = 8
     sql_max_attempts: int = 3
 
-    ai_provider: str = "ollama"
-
-    cf_account_id: str = ""
-    cf_api_token: str = ""
-    cf_ai_model: str = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
-    cf_ai_temperature: float = 0.1
-    cf_ai_timeout_seconds: float = 60
-
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "llama3.1:8b"
     ollama_temperature: float = 0.1
@@ -109,14 +101,6 @@ class Settings(BaseSettings):
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value):
             raise ValueError("DB_SCHEMA must be a valid unquoted PostgreSQL schema name")
         return value
-
-    @field_validator("ai_provider")
-    @classmethod
-    def validate_ai_provider(cls, value: str) -> str:
-        provider = value.strip().lower()
-        if provider not in {"ollama", "cloudflare"}:
-            raise ValueError("AI_PROVIDER must be either ollama or cloudflare")
-        return provider
 
     @field_validator("ollama_base_url")
     @classmethod
@@ -179,20 +163,12 @@ class Settings(BaseSettings):
         return parse_db_url(self.db_url, self.db_user, self.db_password)
 
     @property
-    def cloudflare_configured(self) -> bool:
-        return bool(self.cf_account_id and self.cf_api_token)
-
-    @property
     def ollama_configured(self) -> bool:
         return bool(self.ollama_base_url and self.ollama_model)
 
     @property
     def ai_configured(self) -> bool:
-        return (
-            self.ollama_configured
-            if self.ai_provider == "ollama"
-            else self.cloudflare_configured
-        )
+        return self.ollama_configured
 
     @property
     def database_configured(self) -> bool:

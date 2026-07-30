@@ -170,7 +170,7 @@ The current UI also provides a collapsible history sidebar, per-conversation sch
 | Cost guard | `backend/app/services/cost_guard.py` | EXPLAIN plan thresholds |
 | Result verifier | `backend/app/services/result_verifier.py` | Post-execution invariant checks |
 | Database service | `backend/app/services/database.py` | Read-only pool and execution |
-| AI client | `backend/app/services/ai.py` | Ollama/Cloudflare provider routing |
+| AI client | `backend/app/services/ai.py` | Keyless Ollama chat requests |
 | Runtime skill | `backend/app/skills/askme-data-assistant/SKILL.md` | SQL and summary rules |
 | Reporting service | `backend/app/services/reporting.py` | Insights, AI chart planning, validation, and fallback |
 | Audit service | `backend/app/services/audit.py` | Append-only pilot audit records |
@@ -183,24 +183,16 @@ The current UI also provides a collapsible history sidebar, per-conversation sch
 
 ## Model configuration
 
-The provider and model are environment-configurable. Ollama is the default and does not require an API key:
+The Ollama model and service URL are environment-configurable. Ollama does not require an API key:
 
 ```env
-AI_PROVIDER=ollama
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=llama3.1:8b
 OLLAMA_TEMPERATURE=0.1
 OLLAMA_TIMEOUT_SECONDS=120
 ```
 
-Cloudflare remains an optional provider:
-
-```env
-AI_PROVIDER=cloudflare
-CF_AI_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
-```
-
-There is no automatic provider fallback. This prevents an unavailable local service from silently sending schema metadata or query results to an external provider.
+There is no external-provider fallback. If Ollama is unavailable, AskMe returns an AI-service error instead of sending schema metadata or query results elsewhere.
 
 ## Trust boundaries
 

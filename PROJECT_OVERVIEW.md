@@ -80,7 +80,7 @@ This improves correctness, reduces latency, and avoids unnecessary AI usage.
 | Backend API | FastAPI, Pydantic |
 | Database | PostgreSQL through Psycopg 3 connection pooling |
 | SQL policy parser | SQLGlot with the PostgreSQL dialect |
-| AI provider | Ollama local REST API by default; optional Cloudflare Workers AI |
+| AI provider | Ollama REST API without an API key |
 | AI model | Environment-configurable; `llama3.1:8b` is the default Ollama pilot model |
 | HTTP client | HTTPX |
 | Backend tests | Pytest, pytest-asyncio |
@@ -116,7 +116,7 @@ The canonical, implementation-aligned component flow and trust boundaries are ma
         │              │
         ▼              ▼
 ┌───────────────┐  ┌───────────────┐
-│ Cloudflare AI │  │ PostgreSQL    │
+│ Ollama AI     │  │ PostgreSQL    │
 │ SQL + summary │  │ Read-only     │
 └───────────────┘  └───────────────┘
 ```
@@ -331,7 +331,6 @@ The skill improves model behavior but does not replace deterministic security co
 The provider and model are selected through the environment. Ollama is the default local provider and requires no API key:
 
 ```env
-AI_PROVIDER=ollama
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=llama3.1:8b
 OLLAMA_TEMPERATURE=0.1
@@ -345,8 +344,7 @@ POST {OLLAMA_BASE_URL}/api/chat
 ```
 
 The request uses `stream: false`; response text is read from `message.content`.
-No `Authorization` header is sent. Cloudflare Workers AI remains available only when
-`AI_PROVIDER=cloudflare` is selected and its credentials are configured.
+No `Authorization` header is sent, and no external-provider fallback is configured.
 
 The model performs three bounded tasks:
 
@@ -436,7 +434,6 @@ SCHEMA_CACHE_SECONDS=600
 SCHEMA_MAX_TABLES=8
 SQL_MAX_ATTEMPTS=3
 
-AI_PROVIDER=ollama
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=llama3.1:8b
 OLLAMA_TEMPERATURE=0.1
@@ -494,7 +491,7 @@ cd C:\Users\Dell\Downloads\AskMe-Web\backend
 ..\.venv\Scripts\python.exe -m pytest -q
 ```
 
-The current baseline is **57 passing backend tests**. The suite covers provider routing and keyless Ollama requests, configuration parsing, SQL safety, AST policy, EXPLAIN cost limits, restricted identifiers, schema retrieval, query-agent recovery and consistency, deterministic result verification, reporting, runtime-skill loading, and API health.
+The current baseline is **56 passing backend tests**. The suite covers keyless Ollama requests, configuration parsing, SQL safety, AST policy, EXPLAIN cost limits, restricted identifiers, schema retrieval, query-agent recovery and consistency, deterministic result verification, reporting, runtime-skill loading, and API health.
 
 ### Frontend production build
 

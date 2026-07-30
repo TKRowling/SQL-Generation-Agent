@@ -18,9 +18,7 @@ async def health() -> HealthResponse:
         app=settings.app_name,
         environment=settings.app_env,
         database_configured=settings.database_configured,
-        ai_provider=settings.ai_provider,
         ai_configured=settings.ai_configured,
-        cloudflare_configured=settings.cloudflare_configured,
     )
 
 

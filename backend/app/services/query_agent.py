@@ -8,7 +8,7 @@ from typing import Any
 from app.core.config import get_settings
 from app.core.errors import ForbiddenQueryError, UnsupportedDataQuestionError
 from app.models.api import ChatMessage
-from app.services.ai import workers_ai
+from app.services.ai import ai_client
 from app.services.database import database_service
 from app.services.cost_guard import query_cost_guard
 from app.services.prompt_loader import load_skill_prompts
@@ -222,7 +222,7 @@ class QueryAgent:
                 ),
             ),
         ]
-        answer = (await workers_ai.chat(messages)).strip()
+        answer = (await ai_client.chat(messages)).strip()
         return RouteAnswer(kind="data", answer=answer, rows=[], sql=None)
 
     async def answer_metadata(
@@ -310,7 +310,7 @@ class QueryAgent:
             )
         messages = [ChatMessage(role="system", content=system), *history]
         messages.append(ChatMessage(role="user", content=question))
-        return extract_sql(await workers_ai.chat(messages))
+        return extract_sql(await ai_client.chat(messages))
 
     async def _generate_sql_or_chat(
         self,
@@ -320,7 +320,7 @@ class QueryAgent:
     ) -> str | None:
         messages = [ChatMessage(role="system", content=self._route_system_prompt(schema)), *history]
         messages.append(ChatMessage(role="user", content=text))
-        raw = await workers_ai.chat(messages)
+        raw = await ai_client.chat(messages)
         if "NO_QUERY" in raw.upper():
             return None
         sql = extract_sql(raw)
@@ -447,7 +447,7 @@ class QueryAgent:
                 ),
             ),
         ]
-        answer = (await workers_ai.chat(messages)).strip()
+        answer = (await ai_client.chat(messages)).strip()
         return deterministic_summary(rows, capped) if looks_degenerate(answer) else answer
 
     async def _chat(
@@ -458,7 +458,7 @@ class QueryAgent:
     ) -> RouteAnswer:
         messages = [ChatMessage(role="system", content=system_prompt), *history]
         messages.append(ChatMessage(role="user", content=text))
-        return RouteAnswer(kind="chat", answer=(await workers_ai.chat(messages)).strip(), rows=[])
+        return RouteAnswer(kind="chat", answer=(await ai_client.chat(messages)).strip(), rows=[])
 
     async def answer_data_question(
         self,

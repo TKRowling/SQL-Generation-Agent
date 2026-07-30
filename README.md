@@ -6,7 +6,7 @@ AskMe Web is a React and FastAPI replacement for the original Telegram text-to-S
 
 - Frontend: React, TypeScript, Vite
 - Backend: FastAPI, Pydantic, Pydantic Settings
-- AI: Ollama local REST API by default, with optional Cloudflare Workers AI
+- AI: Ollama REST API without an API key
 - Database: PostgreSQL through `psycopg` and `psycopg-pool`
 - SQL AST: SQLGlot with the PostgreSQL dialect
 - Runtime skill: `backend/app/skills/askme-data-assistant/SKILL.md`
@@ -87,7 +87,6 @@ DB_URL=postgresql://localhost:5432/askme?sslmode=disable
 Configure the Ollama provider in the same file:
 
 ```env
-AI_PROVIDER=ollama
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=llama3.1:8b
 OLLAMA_TEMPERATURE=0.1
@@ -209,7 +208,7 @@ python -m app.scripts.ask "how many documents were created in the last 7 days"
 
 ## Tests
 
-Current verification baseline: 57 backend tests pass, the frontend production build passes, and the runtime skill validates.
+Current verification baseline: 56 backend tests pass, the frontend production build passes, and the runtime skill validates.
 
 Backend:
 
@@ -260,7 +259,6 @@ Keep these markers unchanged when editing the skill:
 - [Current architecture](ARCHITECTURE.md)
 - [Project overview](PROJECT_OVERVIEW.md)
 - [How to build the SQL agent](HOW_TO_BUILD_SQL_AGENT.md)
-- [8B model evaluation](MODEL_8B_EVALUATION.md)
 
 ## Security notes
 

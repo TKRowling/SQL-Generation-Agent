@@ -13,7 +13,6 @@ The current implementation uses:
 - PostgreSQL and Psycopg
 - Ollama local AI service without an API key
 - `llama3.1:8b` (default pilot model)
-- Optional Cloudflare Workers AI provider
 
 Docker, Kubernetes, LangGraph, and a true multi-agent graph are not required for the current local pilot.
 
@@ -90,7 +89,6 @@ DB_PASSWORD=your_password
 DB_SCHEMA=core_banking
 DB_SCHEMAS=accounts,audit_compliance,cards,core_banking,customer360,deposits,digital_banking,fraud_risk,loans,payments
 
-AI_PROVIDER=ollama
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=llama3.1:8b
 OLLAMA_TEMPERATURE=0.1
@@ -208,7 +206,7 @@ Primary file:
 backend/app/services/ai.py
 ```
 
-Ollama receives `POST /api/chat` with `stream: false` and returns the assistant text in `message.content`. No `Authorization` header or API key is required. Cloudflare can remain as an explicitly selected alternative. The model never receives database credentials and cannot execute SQL directly.
+Ollama receives `POST /api/chat` with `stream: false` and returns the assistant text in `message.content`. No `Authorization` header or API key is required. The model never receives database credentials and cannot execute SQL directly.
 
 ### Step 6 — Build the query-agent workflow
 
@@ -498,7 +496,7 @@ npm.cmd run build
 Current evidence:
 
 ```text
-57 backend tests passed
+56 backend tests passed
 Frontend production build passed
 Runtime skill validation passed
 ```
