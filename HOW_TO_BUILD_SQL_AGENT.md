@@ -11,8 +11,8 @@ The current implementation uses:
 - React and TypeScript
 - FastAPI and Pydantic
 - PostgreSQL and Psycopg
-- Ollama local AI service without an API key
-- `llama3.1:8b` (default pilot model)
+- Cloudflare Workers AI
+- `@cf/meta/llama-3.1-8b-instruct-fast` (recommended pilot model)
 
 Docker, Kubernetes, LangGraph, and a true multi-agent graph are not required for the current local pilot.
 
@@ -89,12 +89,11 @@ DB_PASSWORD=your_password
 DB_SCHEMA=core_banking
 DB_SCHEMAS=accounts,audit_compliance,cards,core_banking,customer360,deposits,digital_banking,fraud_risk,loans,payments
 
-OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_CHAT_PATH=/api/chat
-OLLAMA_MODEL=llama3.1:8b
-OLLAMA_TEMPERATURE=0.1
-OLLAMA_TIMEOUT_SECONDS=120
-OLLAMA_TRUST_ENV=false
+CF_ACCOUNT_ID=your_cloudflare_account_id
+CF_API_TOKEN=your_cloudflare_api_token
+CF_AI_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
+CF_AI_TEMPERATURE=0.1
+CF_AI_TIMEOUT_SECONDS=60
 
 EXPOSE_SQL=true
 MAX_ROWS=50
@@ -208,7 +207,7 @@ Primary file:
 backend/app/services/ai.py
 ```
 
-Ollama receives `POST /api/chat` with `stream: false` and returns the assistant text in `message.content`. No `Authorization` header or API key is required. The model never receives database credentials and cannot execute SQL directly.
+Cloudflare receives an authenticated Workers AI request and returns the SQL or assistant text. The model never receives database credentials and cannot execute SQL directly.
 
 ### Step 6 — Build the query-agent workflow
 
@@ -498,7 +497,7 @@ npm.cmd run build
 Current evidence:
 
 ```text
-57 backend tests passed
+56 backend tests passed
 Frontend production build passed
 Runtime skill validation passed
 ```
@@ -509,7 +508,6 @@ Runtime skill validation passed
 |---|---|---|
 | `GET` | `/api/health` | Check backend and configuration |
 | `GET` | `/api/db/ping` | Check PostgreSQL connection |
-| `GET` | `/api/ai/ping` | Check Ollama connection and configured model |
 | `GET` | `/api/db/tables` | List approved tables |
 | `POST` | `/api/schema/refresh` | Refresh schema metadata |
 | `POST` | `/api/chat` | Run the complete SQL Agent flow |

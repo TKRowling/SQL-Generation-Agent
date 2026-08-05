@@ -3,53 +3,39 @@ import json
 import httpx
 import pytest
 
+from app.core.config import Settings
 from app.models.api import ChatMessage
-from app.services.ai import OllamaClient
+from app.services.ai import WorkersAIClient
 
 
 @pytest.mark.asyncio
-async def test_ollama_chat_uses_local_api_without_authorization_header() -> None:
+async def test_workers_ai_sends_bearer_token_and_extracts_response(monkeypatch) -> None:
+    settings = Settings(cf_account_id="account", cf_api_token="token", _env_file=None)
+    monkeypatch.setattr("app.services.ai.get_settings", lambda: settings)
     async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/api/chat"
-        assert "authorization" not in request.headers
+        assert "/accounts/" in request.url.path
+        assert request.headers["authorization"].startswith("Bearer ")
         payload = json.loads(request.content)
-        assert payload["stream"] is False
         assert payload["messages"][0]["content"] == "Generate SQL"
         return httpx.Response(
             200,
-            json={"message": {"role": "assistant", "content": "SELECT 1"}},
+            json={"success": True, "result": {"response": "SELECT 1"}},
         )
 
-    client = OllamaClient(transport=httpx.MockTransport(handler))
-    result = await client.chat(
-        [ChatMessage(role="user", content="Generate SQL")]
-    )
+    result = await WorkersAIClient(
+        transport=httpx.MockTransport(handler)
+    ).chat([ChatMessage(role="user", content="Generate SQL")])
     assert result == "SELECT 1"
 
 
 @pytest.mark.asyncio
-async def test_ollama_rejects_missing_text_output() -> None:
+async def test_workers_ai_rejects_missing_text_output(monkeypatch) -> None:
+    settings = Settings(cf_account_id="account", cf_api_token="token", _env_file=None)
+    monkeypatch.setattr("app.services.ai.get_settings", lambda: settings)
     transport = httpx.MockTransport(
-        lambda _request: httpx.Response(200, json={"message": {"role": "assistant"}})
+        lambda _request: httpx.Response(200, json={"success": True, "result": {}})
     )
-    client = OllamaClient(transport=transport)
     with pytest.raises(Exception, match="did not contain text output"):
-        await client.chat([ChatMessage(role="user", content="Generate SQL")])
-
-
-@pytest.mark.asyncio
-async def test_ollama_ping_reports_model_inventory() -> None:
-    transport = httpx.MockTransport(
-        lambda request: (
-            httpx.Response(
-                200,
-                json={"models": [{"name": "llama3.1:8b"}]},
-            )
-            if request.url.path == "/api/tags"
-            else httpx.Response(404)
+        await WorkersAIClient(transport=transport).chat(
+            [ChatMessage(role="user", content="Generate SQL")]
         )
-    )
-    result = await OllamaClient(transport=transport).ping()
-    assert result["reachable"] is True
-    assert result["model_available"] is True
-    assert result["available_models"] == ["llama3.1:8b"]

@@ -52,13 +52,11 @@ def test_resolves_only_approved_schemas() -> None:
         settings.resolve_schema("payroll")
 
 
-def test_ollama_is_configured_without_api_key() -> None:
+def test_cloudflare_requires_account_and_token() -> None:
     settings = Settings(
-        ollama_base_url="http://127.0.0.1:11434/",
-        ollama_model="llama3.1:8b",
+        cf_account_id="account",
+        cf_api_token="token",
         _env_file=None,
     )
-    assert settings.ollama_base_url == "http://127.0.0.1:11434"
-    assert settings.ollama_chat_path == "/api/chat"
-    assert settings.ollama_trust_env is False
+    assert settings.cloudflare_configured
     assert settings.ai_configured

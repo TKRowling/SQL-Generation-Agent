@@ -69,12 +69,11 @@ class Settings(BaseSettings):
     schema_max_tables: int = 8
     sql_max_attempts: int = 3
 
-    ollama_base_url: str = "http://127.0.0.1:11434"
-    ollama_chat_path: str = "/api/chat"
-    ollama_model: str = "llama3.1:8b"
-    ollama_temperature: float = 0.1
-    ollama_timeout_seconds: float = 120
-    ollama_trust_env: bool = False
+    cf_account_id: str = ""
+    cf_api_token: str = ""
+    cf_ai_model: str = "@cf/meta/llama-3.1-8b-instruct-fast"
+    cf_ai_temperature: float = 0.1
+    cf_ai_timeout_seconds: float = 60
 
     db_url: str = ""
     db_user: str = ""
@@ -103,30 +102,6 @@ class Settings(BaseSettings):
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value):
             raise ValueError("DB_SCHEMA must be a valid unquoted PostgreSQL schema name")
         return value
-
-    @field_validator("ollama_base_url")
-    @classmethod
-    def validate_ollama_base_url(cls, value: str) -> str:
-        url = value.strip().rstrip("/")
-        if not re.match(r"^https?://", url):
-            raise ValueError("OLLAMA_BASE_URL must start with http:// or https://")
-        return url
-
-    @field_validator("ollama_chat_path")
-    @classmethod
-    def validate_ollama_chat_path(cls, value: str) -> str:
-        path = "/" + value.strip().strip("/")
-        if ".." in path or not re.fullmatch(r"/[A-Za-z0-9_./-]+", path):
-            raise ValueError("OLLAMA_CHAT_PATH must be a safe URL path")
-        return path
-
-    @field_validator("ollama_model")
-    @classmethod
-    def validate_ollama_model(cls, value: str) -> str:
-        model = value.strip()
-        if not model:
-            raise ValueError("OLLAMA_MODEL cannot be empty")
-        return model
 
     @field_validator("db_schemas")
     @classmethod
@@ -173,12 +148,12 @@ class Settings(BaseSettings):
         return parse_db_url(self.db_url, self.db_user, self.db_password)
 
     @property
-    def ollama_configured(self) -> bool:
-        return bool(self.ollama_base_url and self.ollama_model)
+    def cloudflare_configured(self) -> bool:
+        return bool(self.cf_account_id and self.cf_api_token and self.cf_ai_model)
 
     @property
     def ai_configured(self) -> bool:
-        return self.ollama_configured
+        return self.cloudflare_configured
 
     @property
     def database_configured(self) -> bool:

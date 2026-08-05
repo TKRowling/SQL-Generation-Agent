@@ -1,16 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.config import get_settings
-from app.core.errors import (
-    AIResponseError,
-    AIUnavailableError,
-    ConfigurationError,
-    DatabaseUnavailableError,
-)
+from app.core.errors import ConfigurationError, DatabaseUnavailableError
 from app.core.security import require_api_key
 from app.models.api import DatabasePingResponse, HealthResponse, TablesResponse
 from app.services.database import database_service
-from app.services.ai import ai_client
 from app.services.schema import schema_service
 
 
@@ -26,18 +20,6 @@ async def health() -> HealthResponse:
         database_configured=settings.database_configured,
         ai_configured=settings.ai_configured,
     )
-
-
-@router.get("/ai/ping", dependencies=[Depends(require_api_key)])
-async def ai_ping() -> dict[str, object]:
-    """Verify the configured Ollama endpoint and model inventory."""
-    try:
-        return await ai_client.ping()
-    except (AIUnavailableError, AIResponseError, ConfigurationError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "AI_UNAVAILABLE", "message": str(exc)},
-        ) from exc
 
 
 @router.get(

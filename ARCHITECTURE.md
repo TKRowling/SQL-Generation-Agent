@@ -96,7 +96,7 @@ Detailed metadata is bounded by `SCHEMA_MAX_TABLES` (default `8`). Retrieval com
 
 ### 3. SQL generation
 
-The configured AI provider receives the runtime rules from `SKILL.md`, approved metadata, relevant conversation context, and the current question. Ollama is the default provider and is called through its local `/api/chat` endpoint without an API key. It must propose exactly one PostgreSQL `SELECT`.
+Cloudflare Workers AI receives the runtime rules from `SKILL.md`, approved metadata, relevant conversation context, and the current question. It must propose exactly one PostgreSQL `SELECT`.
 
 Conversation context is deliberately selective:
 
@@ -170,7 +170,7 @@ The current UI also provides a collapsible history sidebar, per-conversation sch
 | Cost guard | `backend/app/services/cost_guard.py` | EXPLAIN plan thresholds |
 | Result verifier | `backend/app/services/result_verifier.py` | Post-execution invariant checks |
 | Database service | `backend/app/services/database.py` | Read-only pool and execution |
-| AI client | `backend/app/services/ai.py` | Keyless Ollama chat requests |
+| AI client | `backend/app/services/ai.py` | Authenticated Cloudflare Workers AI requests |
 | Runtime skill | `backend/app/skills/askme-data-assistant/SKILL.md` | SQL and summary rules |
 | Reporting service | `backend/app/services/reporting.py` | Insights, AI chart planning, validation, and fallback |
 | Audit service | `backend/app/services/audit.py` | Append-only pilot audit records |
@@ -183,18 +183,15 @@ The current UI also provides a collapsible history sidebar, per-conversation sch
 
 ## Model configuration
 
-The Ollama model and service URL are environment-configurable. Ollama does not require an API key:
+The Cloudflare model is environment-configurable:
 
 ```env
-OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_CHAT_PATH=/api/chat
-OLLAMA_MODEL=llama3.1:8b
-OLLAMA_TEMPERATURE=0.1
-OLLAMA_TIMEOUT_SECONDS=120
-OLLAMA_TRUST_ENV=false
+CF_ACCOUNT_ID=your_account_id
+CF_API_TOKEN=your_api_token
+CF_AI_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
+CF_AI_TEMPERATURE=0.1
+CF_AI_TIMEOUT_SECONDS=60
 ```
-
-There is no external-provider fallback. If Ollama is unavailable, AskMe returns an AI-service error instead of sending schema metadata or query results elsewhere.
 
 ## Trust boundaries
 

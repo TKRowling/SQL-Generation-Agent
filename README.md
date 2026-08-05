@@ -6,7 +6,7 @@ AskMe Web is a React and FastAPI replacement for the original Telegram text-to-S
 
 - Frontend: React, TypeScript, Vite
 - Backend: FastAPI, Pydantic, Pydantic Settings
-- AI: Ollama REST API without an API key
+- AI: Cloudflare Workers AI REST API
 - Database: PostgreSQL through `psycopg` and `psycopg-pool`
 - SQL AST: SQLGlot with the PostgreSQL dialect
 - Runtime skill: `backend/app/skills/askme-data-assistant/SKILL.md`
@@ -41,7 +41,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for component and trust-boundary details.
 - Node.js 20.19 or newer
 - A running PostgreSQL server
 - A PostgreSQL database and login role
-- Ollama installed locally or reachable over the network
+- Cloudflare account ID and Workers AI API token
 
 ## 1. Configure a local PostgreSQL connection
 
@@ -84,21 +84,15 @@ For local connections that explicitly disable TLS:
 DB_URL=postgresql://localhost:5432/askme?sslmode=disable
 ```
 
-Configure the Ollama provider in the same file:
+Configure Cloudflare Workers AI in the same file:
 
 ```env
-OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_CHAT_PATH=/api/chat
-OLLAMA_MODEL=llama3.1:8b
-OLLAMA_TEMPERATURE=0.1
-OLLAMA_TIMEOUT_SECONDS=120
-OLLAMA_TRUST_ENV=false
+CF_ACCOUNT_ID=your_account_id
+CF_API_TOKEN=your_api_token
+CF_AI_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
+CF_AI_TEMPERATURE=0.1
+CF_AI_TIMEOUT_SECONDS=60
 ```
-
-Verify Ollama independently through `GET /api/ai/ping`. For a service mounted
-behind a reverse-proxy prefix, keep that prefix in `OLLAMA_BASE_URL`, for example
-`http://10.123.0.218:8080/ollama`. Keep `OLLAMA_TRUST_ENV=false` for localhost
-or private-network addresses unless the service must be reached through an OS proxy.
 
 Useful database settings:
 
@@ -215,7 +209,7 @@ python -m app.scripts.ask "how many documents were created in the last 7 days"
 
 ## Tests
 
-Current verification baseline: 57 backend tests pass, the frontend production build passes, and the runtime skill validates.
+Current verification baseline: 56 backend tests pass, the frontend production build passes, and the runtime skill validates.
 
 Backend:
 
@@ -241,7 +235,6 @@ npm run build
 | `POST` | `/api/chat/reset` | Clear one browser session's backend memory |
 | `PUT` | `/api/chat/history` | Restore the valid conversation prefix after editing a question |
 | `GET` | `/api/db/ping` | Test the PostgreSQL connection |
-| `GET` | `/api/ai/ping` | Test Ollama reachability and model availability |
 | `GET` | `/api/db/tables?schema=finance` | List tables in one approved selected schema |
 | `POST` | `/api/schema/refresh?schema=finance` | Refresh one approved schema catalog |
 

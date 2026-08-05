@@ -80,8 +80,8 @@ This improves correctness, reduces latency, and avoids unnecessary AI usage.
 | Backend API | FastAPI, Pydantic |
 | Database | PostgreSQL through Psycopg 3 connection pooling |
 | SQL policy parser | SQLGlot with the PostgreSQL dialect |
-| AI provider | Ollama REST API without an API key |
-| AI model | Environment-configurable; `llama3.1:8b` is the default Ollama pilot model |
+| AI provider | Cloudflare Workers AI REST API |
+| AI model | Environment-configurable; `@cf/meta/llama-3.1-8b-instruct-fast` is recommended for the pilot |
 | HTTP client | HTTPX |
 | Backend tests | Pytest, pytest-asyncio |
 | Browser persistence | `localStorage` |
@@ -116,7 +116,7 @@ The canonical, implementation-aligned component flow and trust boundaries are ma
         │              │
         ▼              ▼
 ┌───────────────┐  ┌───────────────┐
-│ Ollama AI     │  │ PostgreSQL    │
+│ Cloudflare AI │  │ PostgreSQL    │
 │ SQL + summary │  │ Read-only     │
 └───────────────┘  └───────────────┘
 ```
@@ -328,25 +328,23 @@ The skill improves model behavior but does not replace deterministic security co
 
 ## 9. AI model
 
-The provider and model are selected through the environment. Ollama is the default local provider and requires no API key:
+The Cloudflare Workers AI model is selected through the environment:
 
 ```env
-OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_CHAT_PATH=/api/chat
-OLLAMA_MODEL=llama3.1:8b
-OLLAMA_TEMPERATURE=0.1
-OLLAMA_TIMEOUT_SECONDS=120
-OLLAMA_TRUST_ENV=false
+CF_ACCOUNT_ID=your_account_id
+CF_API_TOKEN=your_api_token
+CF_AI_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
+CF_AI_TEMPERATURE=0.1
+CF_AI_TIMEOUT_SECONDS=60
 ```
 
 The backend calls:
 
 ```text
-POST {OLLAMA_BASE_URL}/api/chat
+POST /client/v4/accounts/{account_id}/ai/run/{model}
 ```
 
-The request uses `stream: false`; response text is read from `message.content`.
-No `Authorization` header is sent, and no external-provider fallback is configured.
+The backend sends the token in an authorization header. Credentials remain in the backend environment and are never sent to PostgreSQL or the browser.
 
 The model performs three bounded tasks:
 
@@ -384,7 +382,7 @@ Restricted identifiers are removed during schema discovery and checked again bef
 MAX_ROWS=50
 DB_CONNECT_TIMEOUT_SECONDS=10
 DB_STATEMENT_TIMEOUT_MS=30000
-OLLAMA_TIMEOUT_SECONDS=120
+CF_AI_TIMEOUT_SECONDS=60
 ```
 
 ### API protection
@@ -407,7 +405,6 @@ Protect this file as sensitive operational data because it contains user questio
 |---|---|---|
 | `GET` | `/api/health` | Application and configuration health |
 | `GET` | `/api/db/ping` | Database reachability and metadata |
-| `GET` | `/api/ai/ping` | Ollama reachability and configured-model availability |
 | `GET` | `/api/db/tables` | Approved base tables in the configured schema |
 | `POST` | `/api/schema/refresh` | Refresh cached schema metadata |
 | `POST` | `/api/chat` | Execute the query-agent workflow |
@@ -437,12 +434,11 @@ SCHEMA_CACHE_SECONDS=600
 SCHEMA_MAX_TABLES=8
 SQL_MAX_ATTEMPTS=3
 
-OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_CHAT_PATH=/api/chat
-OLLAMA_MODEL=llama3.1:8b
-OLLAMA_TEMPERATURE=0.1
-OLLAMA_TIMEOUT_SECONDS=120
-OLLAMA_TRUST_ENV=false
+CF_ACCOUNT_ID=your_account_id
+CF_API_TOKEN=your_api_token
+CF_AI_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
+CF_AI_TEMPERATURE=0.1
+CF_AI_TIMEOUT_SECONDS=60
 
 DB_URL=postgresql://localhost:5432/banking_demo
 DB_USER=your_read_only_user
@@ -496,7 +492,7 @@ cd C:\Users\Dell\Downloads\AskMe-Web\backend
 ..\.venv\Scripts\python.exe -m pytest -q
 ```
 
-The current baseline is **57 passing backend tests**. The suite covers keyless Ollama requests and health probing, configuration parsing, SQL safety, AST policy, EXPLAIN cost limits, restricted identifiers, schema retrieval, query-agent recovery and consistency, deterministic result verification, reporting, runtime-skill loading, and API health.
+The current baseline covers authenticated Cloudflare requests, configuration parsing, SQL safety, AST policy, EXPLAIN cost limits, restricted identifiers, schema retrieval, query-agent recovery and consistency, deterministic result verification, reporting, runtime-skill loading, and API health.
 
 ### Frontend production build
 
