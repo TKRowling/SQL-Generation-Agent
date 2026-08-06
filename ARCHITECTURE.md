@@ -51,7 +51,8 @@ flowchart TD
     AST -->|Rejected but correctable| RETRY[Bounded correction]
     AST -->|Approved SELECT| COST[EXPLAIN cost guard]
     COST -->|Rejected but correctable| RETRY
-    RETRY -->|Maximum 3 attempts| PLAN
+    RETRY -->|Corrected SELECT| AST
+    RETRY -->|Attempts exhausted| FAIL[Return bounded failure]
 
     COST -->|Approved plan| EXEC[execute_readonly_sql tool]
     EXEC --> VERIFY[verify_query_result tool]
@@ -63,6 +64,7 @@ flowchart TD
     METAANSWER --> RESPONSE
     SUMMARY --> RESPONSE
     CHAT --> RESPONSE
+    FAIL --> RESPONSE
     RESPONSE -->|JSON response| UI
 
     API --> AUDIT[(Audit log)]
@@ -176,7 +178,7 @@ The current UI also provides a collapsible history sidebar, per-conversation sch
 | Agent state | `backend/app/agents/state.py` | Small shared state and stable result contract |
 | LangChain tools | `backend/app/agents/tools.py` | Explicit schema, validation, EXPLAIN, execution, and verification interfaces |
 | Agent debugging | `backend/app/agents/debug.py` | Opt-in redacted node transition and timing logs |
-| Query agent | `backend/app/services/query_agent.py` | Generate, recover, and summarize |
+| LLM role helpers | `backend/app/services/query_agent.py` | Metadata answers, SQL proposals, summaries, and chat prompts |
 | Plan cache | `backend/app/services/plan_cache.py` | Persist schema-versioned validated SQL plans |
 | Schema service | `backend/app/services/schema.py` | Approved catalog and progressive discovery |
 | Query checker | `backend/app/services/query_checker.py` | Pre-execution deterministic validation |

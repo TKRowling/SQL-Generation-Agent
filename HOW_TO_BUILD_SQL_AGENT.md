@@ -41,15 +41,17 @@ AskMe returns:
 User question
   → React frontend
   → POST /api/chat
-  → Deterministic metadata/data router
-  → Semantic retrieval from the approved schema catalog
-  → Configured AI provider plans and generates one SELECT
-  → SQLGlot AST policy checker
-  → PostgreSQL EXPLAIN cost guard
-  → Read-only PostgreSQL execution
-  → Deterministic result verification
-  → Grounded AI business summary
-  → Validated insights and chart
+  → FastAPI mutation guard
+  → LangGraph supervisor
+  → Metadata agent, SQL branch, or chat agent
+  → Schema agent calls search_approved_schema
+  → SQL agent loads a cached plan or generates one SELECT
+  → validate_select_sql tool
+  → explain_query_cost tool
+  → execute_readonly_sql tool
+  → verify_query_result tool
+  → Correction agent for eligible failures
+  → Reporting agent creates a grounded summary and validated chart
   → Audit event is recorded
   → React displays the report
 ```
@@ -61,9 +63,10 @@ AskMe-Web/
 ├── backend/
 │   ├── app/
 │   │   ├── api/routes/       FastAPI endpoints
+│   │   ├── agents/           LangGraph, state, tools, and safe debugging
 │   │   ├── core/             Configuration, security, errors
 │   │   ├── models/           Request and response models
-│   │   ├── services/         Agent, AI, database, schema, audit, reports
+│   │   ├── services/         AI, database, schema, policy, audit, reports
 │   │   └── skills/           Runtime SQL Agent instructions
 │   └── tests/                Backend automated tests
 ├── frontend/
@@ -96,6 +99,7 @@ CF_SQL_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
 CF_KNOWLEDGE_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
 CF_AI_TEMPERATURE=0.1
 CF_AI_TIMEOUT_SECONDS=60
+AGENT_DEBUG=false
 
 EXPOSE_SQL=true
 MAX_ROWS=50
@@ -213,30 +217,31 @@ backend/app/services/ai.py
 
 Cloudflare receives an authenticated Workers AI request and returns the SQL or assistant text. The model never receives database credentials and cannot execute SQL directly.
 
-### Step 6 — Build the query-agent workflow
+### Step 6 — Build the LangGraph multi-agent workflow
 
-The main agent is:
+The graph-facing files are:
 
 ```text
-backend/app/services/query_agent.py
+backend/app/agents/graph.py
+backend/app/agents/state.py
+backend/app/agents/tools.py
+backend/app/agents/debug.py
 ```
 
 Implement this bounded process:
 
 ```text
-1. Route metadata explanations and data questions deterministically
-2. Retrieve relevant tables from the selected approved schema
-3. Generate one SELECT
-4. Parse and validate the PostgreSQL AST
-5. Reject excessive EXPLAIN cost, rows, or joins
-6. Execute through a read-only transaction
-7. Verify result invariants
-8. Correct eligible failures within `SQL_MAX_ATTEMPTS`
-9. Summarize only authoritative rows
-10. Validate reporting and return the response
+1. The supervisor routes metadata, SQL, and chat work.
+2. The schema agent retrieves approved metadata.
+3. The SQL agent reuses a validated cached plan or generates one SELECT.
+4. Deterministic tool nodes validate AST policy and EXPLAIN cost.
+5. The execution tool uses a read-only transaction.
+6. The verification tool checks result invariants.
+7. The correction agent handles eligible failures within `SQL_MAX_ATTEMPTS`.
+8. The reporting agent summarizes authoritative rows and validates chart proposals.
 ```
 
-This is one staged agent with a configurable, bounded correction loop. The default allows three total attempts and cannot run indefinitely.
+This is a compiled LangGraph with named nodes and conditional edges. The default permits three SQL attempts and cannot run indefinitely.
 
 ### Step 7 — Add deterministic routing
 
@@ -504,7 +509,7 @@ npm.cmd run build
 Current evidence:
 
 ```text
-61 backend tests passed
+69 backend tests passed
 Frontend production build passed
 Runtime skill validation passed
 ```
@@ -514,6 +519,7 @@ Runtime skill validation passed
 | Method | Endpoint | Purpose |
 |---|---|---|
 | `GET` | `/api/health` | Check backend and configuration |
+| `GET` | `/api/agent/info` | Show LangGraph nodes, tools, model roles, and security owner |
 | `GET` | `/api/db/ping` | Check PostgreSQL connection |
 | `GET` | `/api/db/tables` | List approved tables |
 | `POST` | `/api/schema/refresh` | Refresh schema metadata |
@@ -545,6 +551,7 @@ Before accepting a card as Done, confirm:
 | DBA | Create read-only role and tune database access |
 | Backend Engineer | Build API, validation, execution, and audit services |
 | AI Engineer | Maintain prompts, skill, model integration, and evaluation |
+| Agent Engineer | Maintain LangGraph state, nodes, tools, transitions, and traces |
 | Frontend Engineer | Build chat, charts, tables, history, and exports |
 | Security | Approve access policy, PII restrictions, and threat tests |
 | QA | Maintain golden questions and regression tests |

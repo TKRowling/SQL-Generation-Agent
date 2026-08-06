@@ -25,7 +25,9 @@ The target user does not need to know table names, joins, SQL syntax, aggregatio
 ### Natural-language database queries
 
 - Accepts business questions through a chat interface.
-- Routes metadata explanations and data questions deterministically.
+- Uses a LangGraph supervisor to route metadata, SQL, and general-chat branches.
+- Exposes named metadata, schema, SQL, correction, reporting, and chat agents.
+- Uses explicit LangChain tools for schema retrieval, validation, EXPLAIN, execution, and verification.
 - Retrieves relevant metadata from the user-selected approved schema.
 - Generates one PostgreSQL `SELECT` statement.
 - Parses and authorizes SQL with a PostgreSQL AST policy checker.
@@ -109,10 +111,10 @@ The canonical, implementation-aligned component flow and trust boundaries are ma
 └──────────────┬───────────────┘
                ▼
 ┌──────────────────────────────┐
-│ Query-agent pipeline         │
-│ Intent → Metadata → Schema   │
-│ SQL → Policy → Execution     │
-│ Summary → Insights → Chart   │
+│ LangGraph multi-agent system │
+│ Supervisor → Metadata/Schema │
+│ SQL → Tools → Correction     │
+│ Reporting → Insights → Chart │
 └───────┬──────────────┬───────┘
         │              │
         ▼              ▼
@@ -180,9 +182,9 @@ Restricted tables and columns are removed before the schema is provided to the l
 
 Discovery is progressive: the model receives the complete approved table-name inventory, but detailed columns and keys only for the most relevant tables and approved foreign-key neighbors. Raw sample rows are not used for discovery.
 
-### Step 5: Route the request
+### Step 5: Route through the LangGraph supervisor
 
-The query agent decides whether the message is:
+The supervisor selects one bounded branch:
 
 - A database question requiring SQL.
 - A general conversation that does not require SQL.
@@ -265,39 +267,41 @@ The backend appends a JSON object to the configured audit log containing relevan
 - Returned row count.
 - Execution time.
 
-## 7. Agent design
+## 7. LangGraph multi-agent design
 
-The current application uses a staged, constrained query agent rather than a free-running autonomous agent.
+The current application uses a compiled, bounded LangGraph rather than a free-running autonomous ReAct loop.
 
-### Intent and policy stage
+### Supervisor agent
 
 Classifies metadata, database, chat, and forbidden mutation requests. Critical mutation blocking is deterministic.
 
-### Schema discovery stage
+### Schema discovery agent
 
 Builds an authoritative approved catalog, exposes table names as an inventory, and retrieves detailed schemas only for relevant tables and foreign-key neighbours. Restricted domains remain hidden before inference.
 
-### SQL planner/generator stage
+### SQL planner agent
 
 Uses the model and runtime skill to translate a supported business request into one schema-grounded `SELECT`.
 
-### Validation stage
+### Deterministic tool nodes
 
-Applies application-level read-only validation, restricted-identifier policies, row limits, and statement rules.
+The `validate_select_sql`, `explain_query_cost`, `execute_readonly_sql`, and `verify_query_result` tools apply policy in a fixed order. The models cannot skip these nodes.
 
-### Execution stage
+### Correction agent
 
-Executes through the backend’s read-only PostgreSQL pool. The AI provider never receives database credentials and never connects directly to PostgreSQL.
+Receives bounded error context, refreshes approved metadata when appropriate, and proposes a different SELECT. Forbidden requests and connectivity failures are not retried.
 
-### Analysis stage
+### Reporting agent
 
 Produces a concise natural-language response from real rows and adds deterministic insights and visualization metadata.
 
-### Reporting stage
+### Chat agent
 
-Renders result tables, charts, SQL, trace information, and downloadable report formats.
+Handles conversation that does not require database execution using the knowledge-model role.
 
 These stages are implemented as named LangGraph nodes with explicit conditional edges. They are logical agents in one FastAPI deployment, not separately deployed network services.
+
+The implementation is organized under `backend/app/agents/`: `graph.py` defines nodes and edges, `state.py` defines shared state, `tools.py` contains governed LangChain tools, and `debug.py` provides redacted node timing logs. Set `AGENT_DEBUG=true` only when local tracing is needed.
 
 ## 8. Runtime skill
 
@@ -409,10 +413,11 @@ Protect this file as sensitive operational data because it contains user questio
 | Method | Endpoint | Purpose |
 |---|---|---|
 | `GET` | `/api/health` | Application and configuration health |
+| `GET` | `/api/agent/info` | LangGraph nodes, tools, model roles, and security ownership |
 | `GET` | `/api/db/ping` | Database reachability and metadata |
 | `GET` | `/api/db/tables` | Approved base tables in the configured schema |
 | `POST` | `/api/schema/refresh` | Refresh cached schema metadata |
-| `POST` | `/api/chat` | Execute the query-agent workflow |
+| `POST` | `/api/chat` | Execute the LangGraph multi-agent workflow |
 | `POST` | `/api/chat/reset` | Clear backend memory for one conversation |
 | `PUT` | `/api/chat/history` | Restore earlier context before regenerating an edited question |
 
@@ -433,6 +438,7 @@ APP_ENV=development
 CORS_ORIGINS=http://localhost:5173
 ASKME_API_KEY=
 EXPOSE_SQL=true
+AGENT_DEBUG=false
 MAX_ROWS=50
 MAX_HISTORY_TURNS=8
 SCHEMA_CACHE_SECONDS=600
@@ -444,6 +450,8 @@ PLAN_CACHE_MAX_ENTRIES=1000
 CF_ACCOUNT_ID=your_account_id
 CF_API_TOKEN=your_api_token
 CF_AI_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
+CF_SQL_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
+CF_KNOWLEDGE_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
 CF_AI_TEMPERATURE=0.1
 CF_AI_TIMEOUT_SECONDS=60
 
@@ -499,7 +507,7 @@ cd C:\Users\Dell\Downloads\AskMe-Web\backend
 ..\.venv\Scripts\python.exe -m pytest -q
 ```
 
-The current baseline covers authenticated Cloudflare requests, configuration parsing, SQL safety, AST policy, EXPLAIN cost limits, restricted identifiers, schema retrieval, query-agent recovery and consistency, deterministic result verification, reporting, runtime-skill loading, and API health.
+The current baseline is 69 passing backend tests. It covers Cloudflare requests, configuration, LangGraph nodes and guarded paths, redacted agent debugging, SQL safety, AST policy, EXPLAIN limits, restricted identifiers, schema retrieval, plan caching, deterministic result verification, reporting, runtime-skill loading, and API health.
 
 ### Frontend production build
 
@@ -558,11 +566,10 @@ Also test:
 - Join-path ranking.
 - Metadata freshness monitoring.
 
-### Phase 3: Multi-agent orchestration
+### Phase 3: Multi-agent production hardening
 
 - Durable LangGraph checkpoints and production tracing.
-- Explicit intent, discovery, planning, SQL, validation, analysis, and reporting nodes.
-- Conditional retries and human-review checkpoints.
+- Human-review checkpoints for policy-sensitive analytical requests.
 - Durable conversation and workflow state.
 
 ### Phase 4: Reporting
