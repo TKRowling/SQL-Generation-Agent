@@ -6,6 +6,7 @@ AskMe Web is a React and FastAPI replacement for the original Telegram text-to-S
 
 - Frontend: React, TypeScript, Vite
 - Backend: FastAPI, Pydantic, Pydantic Settings
+- Agent orchestration: LangGraph with LangChain tools
 - AI: Cloudflare Workers AI REST API
 - Database: PostgreSQL through `psycopg` and `psycopg-pool`
 - SQL AST: SQLGlot with the PostgreSQL dialect
@@ -13,18 +14,16 @@ AskMe Web is a React and FastAPI replacement for the original Telegram text-to-S
 
 ## Current workflow
 
-1. Route forbidden mutations, metadata explanations, normal conversation, and SELECT-only data questions separately.
-2. Build a cached catalog and remove restricted tables and columns.
-3. Semantically rank approved tables using identifiers, columns, business synonyms, and foreign-key neighbors.
-4. Generate exactly one PostgreSQL `SELECT`.
-5. Parse and authorize the SQL AST against the selected schema and authoritative catalog.
-6. Run PostgreSQL `EXPLAIN (FORMAT JSON)` and reject excessive estimated cost or rows.
-7. Correct eligible policy, plan, execution, or result-verification failures within a bounded loop.
-8. Execute only validated SQL in a read-only PostgreSQL session with time and row limits.
-9. Verify deterministic result invariants and summarize only authoritative rows.
-9. Add deterministic insights and a useful line, bar, or pie/donut chart when appropriate.
-10. Record an audit event and return the report, formatted copyable SQL, and exports.
-11. Keep bounded backend context and multiple browser conversations.
+1. Block mutation intent before agent execution.
+2. Use the LangGraph supervisor to route metadata, SQL, and general-chat requests.
+3. Let the schema agent build a governed catalog with restricted metadata removed.
+4. Semantically rank approved tables using identifiers, columns, business synonyms, and foreign-key neighbors.
+5. Let the SQL agent reuse a schema-versioned plan or propose one `SELECT`.
+6. Call explicit LangChain tools for AST validation, EXPLAIN, read-only execution, and result verification.
+7. Route eligible failures through the bounded correction agent.
+8. Let the reporting agent summarize only authoritative rows and propose validated charts.
+9. Record an audit event and return the report, formatted copyable SQL, and exports.
+10. Keep bounded backend context and multiple browser conversations.
 
 AskMe's two database capabilities are:
 
@@ -34,6 +33,10 @@ AskMe's two database capabilities are:
   bounded correction, limits, and audit logging.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for component and trust-boundary details.
+
+The deployed agent inventory is available from `GET /api/agent/info` for demonstrations and operational verification.
+
+For safe local graph tracing, set `AGENT_DEBUG=true` in `backend/.env` and restart FastAPI. See [backend/app/agents/README.md](backend/app/agents/README.md) for the simplified folder map and debugging workflow.
 
 ## Prerequisites
 
@@ -90,9 +93,13 @@ Configure Cloudflare Workers AI in the same file:
 CF_ACCOUNT_ID=your_account_id
 CF_API_TOKEN=your_api_token
 CF_AI_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
+CF_SQL_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
+CF_KNOWLEDGE_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
 CF_AI_TEMPERATURE=0.1
 CF_AI_TIMEOUT_SECONDS=60
 ```
+
+The SQL model handles SELECT planning and bounded correction. The knowledge model handles database metadata explanations, verified-result summaries, chart planning, and general database questions. A blank specialized setting falls back to `CF_AI_MODEL`.
 
 Useful database settings:
 
@@ -106,6 +113,8 @@ DB_EXPLAIN_MAX_JOINS=8
 MAX_ROWS=50
 SCHEMA_MAX_TABLES=8
 SQL_MAX_ATTEMPTS=3
+PLAN_CACHE_PATH=logs/plan_cache.sqlite3
+PLAN_CACHE_MAX_ENTRIES=1000
 EXPOSE_SQL=false
 ```
 
@@ -209,7 +218,7 @@ python -m app.scripts.ask "how many documents were created in the last 7 days"
 
 ## Tests
 
-Current verification baseline: 56 backend tests pass, the frontend production build passes, and the runtime skill validates.
+Current verification baseline: 61 backend tests pass, the frontend production build passes, and the runtime skill validates.
 
 Backend:
 

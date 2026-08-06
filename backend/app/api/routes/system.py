@@ -5,10 +5,39 @@ from app.core.errors import ConfigurationError, DatabaseUnavailableError
 from app.core.security import require_api_key
 from app.models.api import DatabasePingResponse, HealthResponse, TablesResponse
 from app.services.database import database_service
+from app.agents.graph import multi_agent_system
 from app.services.schema import schema_service
 
 
 router = APIRouter(tags=["system"])
+
+
+@router.get("/agent/info", dependencies=[Depends(require_api_key)])
+async def agent_info() -> dict[str, object]:
+    """Expose the deployed graph and governed tool inventory for operations."""
+    nodes = sorted(
+        name
+        for name in multi_agent_system.graph.get_graph().nodes
+        if not name.startswith("__")
+    )
+    return {
+        "framework": "LangGraph",
+        "architecture": "bounded_multi_agent",
+        "nodes": nodes,
+        "tools": [
+            "search_approved_schema",
+            "get_schema_fingerprint",
+            "validate_select_sql",
+            "explain_query_cost",
+            "execute_readonly_sql",
+            "verify_query_result",
+        ],
+        "model_roles": {
+            "sql": "planning_and_correction",
+            "knowledge": "metadata_summary_chat_and_chart_planning",
+        },
+        "security_owner": "deterministic_backend_tools",
+    }
 
 
 @router.get("/health", response_model=HealthResponse)

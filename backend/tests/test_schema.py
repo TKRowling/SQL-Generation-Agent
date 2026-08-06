@@ -1,4 +1,12 @@
-from app.services.schema import SchemaCatalog, build_schema_summary, select_relevant_tables
+import pytest
+
+from app.core.config import get_settings
+from app.services.schema import (
+    SchemaCatalog,
+    SchemaService,
+    build_schema_summary,
+    select_relevant_tables,
+)
 
 
 def test_schema_hides_secrets_and_marks_keys() -> None:
@@ -58,3 +66,40 @@ def test_semantic_synonyms_retrieve_income_for_salary_question() -> None:
         max_tables=1,
     )
     assert selected == ["customer_income"]
+
+
+@pytest.mark.asyncio
+async def test_schema_fingerprint_changes_with_approved_structure(monkeypatch) -> None:
+    service = SchemaService()
+    schema_name = get_settings().db_schema
+    service._cached_columns[schema_name] = [
+        {
+            "table_name": "customers",
+            "column_name": "customer_id",
+            "data_type": "bigint",
+            "is_nullable": "NO",
+            "is_pk": True,
+            "is_unique": True,
+        }
+    ]
+    service._cached_foreign_keys[schema_name] = []
+
+    async def keep_seeded_catalog(*_args, **_kwargs):
+        return "customers: customer_id bigint PK"
+
+    monkeypatch.setattr(service, "get_summary", keep_seeded_catalog)
+    original = await service.get_fingerprint(schema_name)
+
+    service._cached_columns[schema_name].append(
+        {
+            "table_name": "customers",
+            "column_name": "status",
+            "data_type": "character varying",
+            "is_nullable": "YES",
+            "is_pk": False,
+            "is_unique": False,
+        }
+    )
+    changed = await service.get_fingerprint(schema_name)
+
+    assert original != changed

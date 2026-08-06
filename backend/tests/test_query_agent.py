@@ -135,6 +135,40 @@ async def test_bounded_recovery_retries_with_new_sql(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_empty_result_is_rechecked_then_returned_as_confirmed(monkeypatch) -> None:
+    agent = QueryAgent()
+    attempts: list[str] = []
+
+    async def run_guarded(sql: str, _schema_name: str):
+        attempts.append(sql)
+        return []
+
+    async def generate_sql(*_args, **_kwargs):
+        return "SELECT customer_id FROM customers WHERE status = 'MISSING'"
+
+    async def relevant_summary(*_args, **_kwargs):
+        return "customers: customer_id varchar, status varchar"
+
+    monkeypatch.setattr(agent, "_run_guarded", run_guarded)
+    monkeypatch.setattr(agent, "_generate_sql", generate_sql)
+    monkeypatch.setattr(
+        "app.services.query_agent.schema_service.get_relevant_summary",
+        relevant_summary,
+    )
+
+    sql, rows = await agent._run_with_retry(
+        "Show customers with missing status",
+        "customers: customer_id varchar, status varchar",
+        "SELECT customer_id FROM customers WHERE status = 'MISSING'",
+        [],
+        "customer360",
+    )
+    assert len(attempts) == 1
+    assert "status = 'MISSING'" in sql
+    assert rows == []
+
+
+@pytest.mark.asyncio
 async def test_unsupported_result_stops_after_catalog_recheck(monkeypatch) -> None:
     agent = QueryAgent()
 
@@ -199,3 +233,55 @@ async def test_unsupported_claim_can_recover_using_complete_catalog(monkeypatch)
     assert histories == [[]]
     assert "customer_income" in sql
     assert rows == [{"customer_id": "CUS1", "total_income": 100}]
+
+
+@pytest.mark.asyncio
+async def test_persistent_plan_hit_skips_generation_but_uses_guarded_execution(
+    monkeypatch,
+) -> None:
+    agent = QueryAgent()
+    cached_sql = "SELECT customer_id FROM customers ORDER BY customer_id LIMIT 10"
+    guarded: list[tuple[str, str]] = []
+
+    async def relevant_summary(*_args, **_kwargs):
+        return "customers: customer_id bigint PK"
+
+    async def fingerprint(*_args, **_kwargs):
+        return "schema-v1"
+
+    async def cache_get(question, schema_name, schema_fingerprint):
+        assert question == "List the first 10 customers"
+        assert schema_fingerprint == "schema-v1"
+        return cached_sql
+
+    async def generation_must_not_run(*_args, **_kwargs):
+        raise AssertionError("SQL generation should not run on a valid cache hit")
+
+    async def run_guarded(sql, schema_name):
+        guarded.append((sql, schema_name))
+        return [{"customer_id": 1}]
+
+    async def summarize(*_args, **_kwargs):
+        return "Found one customer."
+
+    monkeypatch.setattr(
+        "app.services.query_agent.schema_service.get_relevant_summary",
+        relevant_summary,
+    )
+    monkeypatch.setattr(
+        "app.services.query_agent.schema_service.get_fingerprint",
+        fingerprint,
+    )
+    monkeypatch.setattr("app.services.query_agent.plan_cache.get", cache_get)
+    monkeypatch.setattr(agent, "_generate_sql", generation_must_not_run)
+    monkeypatch.setattr(agent, "_run_guarded", run_guarded)
+    monkeypatch.setattr(agent, "_summarize", summarize)
+
+    result = await agent.answer_data_question(
+        "List the first 10 customers",
+        schema_name="customer360",
+    )
+
+    assert result.sql == cached_sql
+    assert result.rows == [{"customer_id": 1}]
+    assert guarded == [(cached_sql, "customer360")]

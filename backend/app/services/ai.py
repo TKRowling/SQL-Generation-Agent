@@ -12,8 +12,20 @@ from app.models.api import ChatMessage
 class WorkersAIClient:
     BASE_URL = "https://api.cloudflare.com/client/v4"
 
-    def __init__(self, transport: httpx.AsyncBaseTransport | None = None) -> None:
+    def __init__(
+        self,
+        transport: httpx.AsyncBaseTransport | None = None,
+        model_role: str = "default",
+    ) -> None:
         self._transport = transport
+        self._model_role = model_role
+
+    def _model(self, settings: Any) -> str:
+        if self._model_role == "sql":
+            return settings.sql_model
+        if self._model_role == "knowledge":
+            return settings.knowledge_model
+        return settings.cf_ai_model
 
     async def chat(self, messages: list[ChatMessage]) -> str:
         settings = get_settings()
@@ -22,9 +34,10 @@ class WorkersAIClient:
                 "Cloudflare Workers AI is not configured. Set CF_ACCOUNT_ID and CF_API_TOKEN."
             )
 
+        model = self._model(settings)
         url = (
             f"{self.BASE_URL}/accounts/{settings.cf_account_id}/ai/run/"
-            f"{settings.cf_ai_model}"
+            f"{model}"
         )
         payload = {
             "messages": [message.model_dump() for message in messages],
@@ -74,4 +87,7 @@ class WorkersAIClient:
         raise AIResponseError("Workers AI response did not contain text output.")
 
 
-ai_client = WorkersAIClient()
+sql_ai_client = WorkersAIClient(model_role="sql")
+knowledge_ai_client = WorkersAIClient(model_role="knowledge")
+# Backwards-compatible default for callers that do not need a specialized role.
+ai_client = knowledge_ai_client

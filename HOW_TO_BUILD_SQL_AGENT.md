@@ -14,7 +14,7 @@ The current implementation uses:
 - Cloudflare Workers AI
 - `@cf/meta/llama-3.1-8b-instruct-fast` (recommended pilot model)
 
-Docker, Kubernetes, LangGraph, and a true multi-agent graph are not required for the current local pilot.
+Docker and Kubernetes are not required for the current local pilot. LangGraph and LangChain Core provide the bounded multi-agent orchestration and explicit tool contracts.
 
 ## 2. Target result
 
@@ -92,6 +92,8 @@ DB_SCHEMAS=accounts,audit_compliance,cards,core_banking,customer360,deposits,dig
 CF_ACCOUNT_ID=your_cloudflare_account_id
 CF_API_TOKEN=your_cloudflare_api_token
 CF_AI_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
+CF_SQL_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
+CF_KNOWLEDGE_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
 CF_AI_TEMPERATURE=0.1
 CF_AI_TIMEOUT_SECONDS=60
 
@@ -103,6 +105,8 @@ DB_EXPLAIN_MAX_ROWS=1000000
 DB_EXPLAIN_MAX_JOINS=8
 SCHEMA_MAX_TABLES=8
 SQL_MAX_ATTEMPTS=3
+PLAN_CACHE_PATH=logs/plan_cache.sqlite3
+PLAN_CACHE_MAX_ENTRIES=1000
 ```
 
 Never commit real credentials.
@@ -353,8 +357,11 @@ For stable 8B-model behavior:
 - Send history to SQL generation only for clear follow-up questions.
 - Do not pass previous failed turns into a new standalone question.
 - Recheck `UNSUPPORTED` claims against the complete approved catalog.
-- Cache successful plans by normalized question and schema.
+- Persist successful plans by normalized-question hash, selected schema, and schema fingerprint.
+- Invalidate plans automatically when tables, columns, types, keys, or relationships change.
 - Revalidate cached plans through every deterministic guard before execution.
+
+The pilot cache uses SQLite at `PLAN_CACHE_PATH`. It stores the generated SQL and a SHA-256 question hash, not the raw question text. A cache failure must degrade to normal SQL generation rather than making chat unavailable.
 
 ### Step 11 — Build analysis and chart selection
 
@@ -497,7 +504,7 @@ npm.cmd run build
 Current evidence:
 
 ```text
-56 backend tests passed
+61 backend tests passed
 Frontend production build passed
 Runtime skill validation passed
 ```
@@ -554,7 +561,7 @@ Prioritize these production improvements:
 6. Persistent shared conversation storage
 7. Governed business glossary and KPI catalog
 8. Governed vector and business-glossary retrieval
-9. LangGraph orchestration after stage contracts are stable
+9. Durable LangGraph checkpoints and production agent tracing
 
 ## 10. Card completion template
 

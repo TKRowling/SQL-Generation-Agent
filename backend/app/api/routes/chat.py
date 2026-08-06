@@ -23,8 +23,8 @@ from app.models.api import (
 )
 from app.services.history import conversation_store
 from app.services.audit import audit_service
-from app.services.query_agent import looks_like_destructive_request, query_agent
-from app.services.reporting import build_report_with_ai
+from app.agents.graph import multi_agent_system
+from app.services.query_agent import looks_like_destructive_request
 
 
 router = APIRouter(prefix="/chat", tags=["chat"], dependencies=[Depends(require_api_key)])
@@ -62,25 +62,14 @@ async def chat(request: ChatRequest) -> ChatResponse:
         return response
 
     try:
-        metadata = await query_agent.answer_metadata(
-            request.message, selected_schema, history
+        result = await multi_agent_system.run(
+            question=request.message,
+            schema_name=selected_schema,
+            history=history,
+            system_prompt=settings.bot_system_prompt,
+            force_data=request.force_data,
         )
-        if metadata is not None:
-            result = metadata
-            kind = result.kind
-        elif request.force_data:
-            result = await query_agent.answer_data_question(
-                request.message, history, selected_schema
-            )
-            kind = "data"
-        else:
-            result = await query_agent.answer_message(
-                request.message,
-                history,
-                settings.bot_system_prompt,
-                selected_schema,
-            )
-            kind = result.kind
+        kind = result.kind
     except ForbiddenQueryError as exc:
         raise api_error(
             status.HTTP_403_FORBIDDEN,
@@ -142,7 +131,6 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
     await conversation_store.append_exchange(request.session_id, request.message, result.answer)
     sql = result.sql if settings.expose_sql else None
-    insights, chart = await build_report_with_ai(result.rows, request.message)
     execution_ms = round((time.perf_counter() - started) * 1000)
     response = ChatResponse(
         kind=kind,
@@ -150,8 +138,8 @@ async def chat(request: ChatRequest) -> ChatResponse:
         rows=result.rows,
         row_count=result.row_count,
         sql=sql,
-        insights=insights,
-        chart=chart,
+        insights=result.insights or [],
+        chart=result.chart,
         request_id=request_id,
         execution_ms=execution_ms,
     )

@@ -1,6 +1,13 @@
 from app.services.reporting import build_report, validate_chart_proposal
 
 
+def test_empty_result_explains_why_no_chart_exists() -> None:
+    insights, chart = build_report([], "Show a chart")
+    assert chart is None
+    assert any("No rows matched" in insight for insight in insights)
+    assert any("No chart" in insight for insight in insights)
+
+
 def test_uses_pie_for_small_part_to_whole_breakdown() -> None:
     rows = [
         {"transaction_type": "TRANSFER", "transaction_count": 60},

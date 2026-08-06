@@ -8,10 +8,11 @@ from typing import Any
 from app.core.config import get_settings
 from app.core.errors import ForbiddenQueryError, UnsupportedDataQuestionError
 from app.models.api import ChatMessage
-from app.services.ai import ai_client
+from app.services.ai import knowledge_ai_client, sql_ai_client
 from app.services.database import database_service
 from app.services.cost_guard import query_cost_guard
 from app.services.prompt_loader import load_skill_prompts
+from app.services.plan_cache import plan_cache
 from app.services.query_checker import query_checker
 from app.services.result_verifier import verify_result
 from app.services.schema import schema_service
@@ -194,14 +195,6 @@ def deterministic_summary(rows: list[dict[str, Any]], capped: bool) -> str:
 
 
 class QueryAgent:
-    def __init__(self) -> None:
-        self._successful_plans: dict[tuple[str, str], str] = {}
-
-    @staticmethod
-    def _plan_key(question: str, schema_name: str) -> tuple[str, str]:
-        normalized = re.sub(r"\s+", " ", question).strip().casefold().rstrip("?.!")
-        return schema_name.casefold(), normalized
-
     async def _answer_schema_question(
         self,
         question: str,
@@ -222,7 +215,7 @@ class QueryAgent:
                 ),
             ),
         ]
-        answer = (await ai_client.chat(messages)).strip()
+        answer = (await knowledge_ai_client.chat(messages)).strip()
         return RouteAnswer(kind="data", answer=answer, rows=[], sql=None)
 
     async def answer_metadata(
@@ -310,7 +303,7 @@ class QueryAgent:
             )
         messages = [ChatMessage(role="system", content=system), *history]
         messages.append(ChatMessage(role="user", content=question))
-        return extract_sql(await ai_client.chat(messages))
+        return extract_sql(await sql_ai_client.chat(messages))
 
     async def _generate_sql_or_chat(
         self,
@@ -320,7 +313,7 @@ class QueryAgent:
     ) -> str | None:
         messages = [ChatMessage(role="system", content=self._route_system_prompt(schema)), *history]
         messages.append(ChatMessage(role="user", content=text))
-        raw = await ai_client.chat(messages)
+        raw = await sql_ai_client.chat(messages)
         if "NO_QUERY" in raw.upper():
             return None
         sql = extract_sql(raw)
@@ -342,10 +335,13 @@ class QueryAgent:
         first_sql: str,
         history: list[ChatMessage],
         schema_name: str,
+        schema_fingerprint: str | None = None,
+        first_sql_cached: bool = False,
     ) -> tuple[str, list[dict[str, Any]]]:
         settings = get_settings()
         sql = first_sql
         attempted: set[str] = set()
+        empty_attempts: set[str] = set()
         active_schema = schema
 
         for attempt in range(1, max(1, settings.sql_max_attempts) + 1):
@@ -377,6 +373,8 @@ class QueryAgent:
                 )
             normalized_key = re.sub(r"\s+", " ", sql).strip().lower()
             if normalized_key in attempted:
+                if normalized_key in empty_attempts:
+                    return sql, []
                 raise UnsupportedDataQuestionError(
                     f"I couldn’t generate a different valid SELECT for the {schema_name} "
                     "schema. The requested field or relationship may not exist in its "
@@ -385,19 +383,32 @@ class QueryAgent:
             attempted.add(normalized_key)
             try:
                 rows = await self._run_guarded(sql, schema_name)
+                if not rows and attempt < settings.sql_max_attempts:
+                    empty_attempts.add(normalized_key)
+                    raise ValueError(
+                        "The query executed successfully but returned zero rows. "
+                        "Re-check table selection, joins, data types, and implicit date "
+                        "assumptions against the approved schema. Preserve every explicit "
+                        "filter requested by the user; do not broaden the business question."
+                    )
                 verification = verify_result(question, sql, rows)
                 if not verification.passed:
                     raise ValueError(
                         "Result verification failed: " + "; ".join(verification.issues)
                     )
-                self._successful_plans[self._plan_key(question, schema_name)] = sql
+                if schema_fingerprint:
+                    await plan_cache.put(question, schema_name, schema_fingerprint, sql)
                 return sql, rows
             except ForbiddenQueryError:
+                if first_sql_cached and attempt == 1 and schema_fingerprint:
+                    await plan_cache.delete(question, schema_name, schema_fingerprint)
                 raise
             except Exception as exc:
                 # Connectivity exceptions are never retried as SQL-generation mistakes.
                 from app.core.errors import DatabaseUnavailableError
 
+                if first_sql_cached and attempt == 1 and schema_fingerprint:
+                    await plan_cache.delete(question, schema_name, schema_fingerprint)
                 if isinstance(exc, DatabaseUnavailableError) or attempt >= settings.sql_max_attempts:
                     raise
                 active_schema = await schema_service.get_relevant_summary(
@@ -426,6 +437,14 @@ class QueryAgent:
         sql: str,
         rows: list[dict[str, Any]],
     ) -> str:
+        if not rows:
+            return (
+                "No records match the requested conditions in the selected schema. "
+                "The query was validated and retried with refreshed schema metadata, but "
+                "the confirmed result is empty. A chart cannot be produced without "
+                "authoritative result rows. Try a wider date range or verify the requested "
+                "status, category, and schema."
+            )
         settings = get_settings()
         prompts = load_skill_prompts(settings.max_rows)
         capped = len(rows) >= settings.max_rows
@@ -447,7 +466,7 @@ class QueryAgent:
                 ),
             ),
         ]
-        answer = (await ai_client.chat(messages)).strip()
+        answer = (await knowledge_ai_client.chat(messages)).strip()
         return deterministic_summary(rows, capped) if looks_degenerate(answer) else answer
 
     async def _chat(
@@ -458,7 +477,11 @@ class QueryAgent:
     ) -> RouteAnswer:
         messages = [ChatMessage(role="system", content=system_prompt), *history]
         messages.append(ChatMessage(role="user", content=text))
-        return RouteAnswer(kind="chat", answer=(await ai_client.chat(messages)).strip(), rows=[])
+        return RouteAnswer(
+            kind="chat",
+            answer=(await knowledge_ai_client.chat(messages)).strip(),
+            rows=[],
+        )
 
     async def answer_data_question(
         self,
@@ -477,11 +500,19 @@ class QueryAgent:
             schema=selected_schema,
             additional_terms=history_terms,
         )
-        first_sql = self._successful_plans.get(
-            self._plan_key(question, selected_schema)
-        ) or await self._generate_sql(question, schema, relevant_history)
+        schema_fingerprint = await schema_service.get_fingerprint(selected_schema)
+        cached_sql = await plan_cache.get(question, selected_schema, schema_fingerprint)
+        first_sql = cached_sql or await self._generate_sql(
+            question, schema, relevant_history
+        )
         sql, rows = await self._run_with_retry(
-            question, schema, first_sql, relevant_history, selected_schema
+            question,
+            schema,
+            first_sql,
+            relevant_history,
+            selected_schema,
+            schema_fingerprint,
+            cached_sql is not None,
         )
         answer = await self._summarize(question, sql, rows)
         return DataAnswer(question=question, sql=sql, answer=answer, rows=rows)
@@ -511,7 +542,9 @@ class QueryAgent:
                 raise
             return await self._chat(text, history, system_prompt)
 
-        first_sql = self._successful_plans.get(self._plan_key(text, selected_schema))
+        schema_fingerprint = await schema_service.get_fingerprint(selected_schema)
+        cached_sql = await plan_cache.get(text, selected_schema, schema_fingerprint)
+        first_sql = cached_sql
         if first_sql is None:
             first_sql = await self._generate_sql_or_chat(
                 text, schema, relevant_history
@@ -525,7 +558,13 @@ class QueryAgent:
             return await self._chat(text, history, system_prompt)
 
         sql, rows = await self._run_with_retry(
-            text, schema, first_sql, relevant_history, selected_schema
+            text,
+            schema,
+            first_sql,
+            relevant_history,
+            selected_schema,
+            schema_fingerprint,
+            cached_sql is not None,
         )
         answer = await self._summarize(text, sql, rows)
         return RouteAnswer(kind="data", answer=answer, sql=sql, rows=rows)

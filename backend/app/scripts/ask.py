@@ -1,12 +1,20 @@
 import argparse
 import asyncio
 
-from app.services.query_agent import query_agent
+from app.agents.graph import multi_agent_system
+from app.core.config import get_settings
 
 
 async def run(question: str) -> None:
-    result = await query_agent.answer_data_question(question)
-    print("Q     :", result.question)
+    settings = get_settings()
+    result = await multi_agent_system.run(
+        question=question,
+        schema_name=settings.db_schema,
+        history=[],
+        system_prompt=settings.bot_system_prompt,
+        force_data=True,
+    )
+    print("Q     :", question)
     print("SQL   :", result.sql)
     print("Rows  :", result.row_count)
     print("Answer:", result.answer)

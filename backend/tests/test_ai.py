@@ -39,3 +39,34 @@ async def test_workers_ai_rejects_missing_text_output(monkeypatch) -> None:
         await WorkersAIClient(transport=transport).chat(
             [ChatMessage(role="user", content="Generate SQL")]
         )
+
+
+@pytest.mark.asyncio
+async def test_specialized_clients_select_their_configured_models(monkeypatch) -> None:
+    settings = Settings(
+        cf_account_id="account",
+        cf_api_token="token",
+        cf_sql_model="@cf/test/sql-model",
+        cf_knowledge_model="@cf/test/knowledge-model",
+        _env_file=None,
+    )
+    monkeypatch.setattr("app.services.ai.get_settings", lambda: settings)
+    requested_paths: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requested_paths.append(request.url.path)
+        return httpx.Response(
+            200,
+            json={"success": True, "result": {"response": "ok"}},
+        )
+
+    transport = httpx.MockTransport(handler)
+    await WorkersAIClient(transport=transport, model_role="sql").chat(
+        [ChatMessage(role="user", content="Generate SQL")]
+    )
+    await WorkersAIClient(transport=transport, model_role="knowledge").chat(
+        [ChatMessage(role="user", content="Explain a table")]
+    )
+
+    assert requested_paths[0].endswith("/@cf/test/sql-model")
+    assert requested_paths[1].endswith("/@cf/test/knowledge-model")

@@ -34,7 +34,7 @@ The target user does not need to know table names, joins, SQL syntax, aggregatio
 - Verifies result invariants before business summarization.
 - Retains bounded context only for clear follow-up questions.
 - Rechecks model `UNSUPPORTED` claims against the complete approved catalog.
-- Reuses successful plans for identical question/schema pairs while revalidating every execution.
+- Persists successful plans by normalized-question hash, schema, and schema fingerprint while revalidating every execution.
 
 ### Deterministic metadata requests
 
@@ -78,6 +78,7 @@ This improves correctness, reduces latency, and avoids unnecessary AI usage.
 |---|---|
 | Frontend | React 19, TypeScript, Vite |
 | Backend API | FastAPI, Pydantic |
+| Agent orchestration | LangGraph 1.2.9 and LangChain Core tools |
 | Database | PostgreSQL through Psycopg 3 connection pooling |
 | SQL policy parser | SQLGlot with the PostgreSQL dialect |
 | AI provider | Cloudflare Workers AI REST API |
@@ -91,7 +92,7 @@ The current implementation does not require Docker or Kubernetes.
 
 ## 5. Architecture
 
-The canonical, implementation-aligned component flow and trust boundaries are maintained in [ARCHITECTURE.md](ARCHITECTURE.md). In summary, AskMe is one constrained staged agent: deterministic routing, semantic metadata retrieval, AI SQL proposal, AST policy checking, EXPLAIN cost guarding, bounded recovery, read-only execution, result verification, grounded analysis, validated reporting, and audit.
+The canonical, implementation-aligned component flow and trust boundaries are maintained in [ARCHITECTURE.md](ARCHITECTURE.md). AskMe is a bounded LangGraph multi-agent system: supervisor routing, metadata and schema agents, SQL planning, deterministic LangChain security tools, a correction agent, read-only execution, result verification, and a reporting agent.
 
 ```text
 ┌──────────────────────────────┐
@@ -296,7 +297,7 @@ Produces a concise natural-language response from real rows and adds determinist
 
 Renders result tables, charts, SQL, trace information, and downloadable report formats.
 
-These stages are separated by responsibility, but the current repository does **not** yet use LangGraph or multiple independently deployed agents. LangGraph orchestration remains a roadmap item.
+These stages are implemented as named LangGraph nodes with explicit conditional edges. They are logical agents in one FastAPI deployment, not separately deployed network services.
 
 ## 8. Runtime skill
 
@@ -326,17 +327,21 @@ Important skill rules include:
 
 The skill improves model behavior but does not replace deterministic security controls.
 
-## 9. AI model
+## 9. AI models
 
-The Cloudflare Workers AI model is selected through the environment:
+Two specialized Cloudflare Workers AI roles are selected through the environment:
 
 ```env
 CF_ACCOUNT_ID=your_account_id
 CF_API_TOKEN=your_api_token
 CF_AI_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
+CF_SQL_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
+CF_KNOWLEDGE_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
 CF_AI_TEMPERATURE=0.1
 CF_AI_TIMEOUT_SECONDS=60
 ```
+
+The SQL model proposes and corrects SELECT statements. The knowledge model answers grounded metadata questions and creates business summaries and chart proposals from authoritative results. `CF_AI_MODEL` remains the fallback for either specialized setting.
 
 The backend calls:
 
@@ -433,6 +438,8 @@ MAX_HISTORY_TURNS=8
 SCHEMA_CACHE_SECONDS=600
 SCHEMA_MAX_TABLES=8
 SQL_MAX_ATTEMPTS=3
+PLAN_CACHE_PATH=logs/plan_cache.sqlite3
+PLAN_CACHE_MAX_ENTRIES=1000
 
 CF_ACCOUNT_ID=your_account_id
 CF_API_TOKEN=your_api_token
@@ -530,7 +537,7 @@ Also test:
 - There is no user identity, SSO, RBAC, or row-level authorization layer yet.
 - Semantic retrieval currently uses identifiers, columns, synonyms, and foreign-key neighbors; there is no governed vector catalog or business glossary yet.
 - There is no automated golden-query correctness evaluation yet.
-- The current workflow is staged but is not implemented with LangGraph.
+- The graph is bounded and process-local; durable LangGraph checkpoint storage is not yet configured.
 
 ## 16. Roadmap
 
@@ -553,7 +560,7 @@ Also test:
 
 ### Phase 3: Multi-agent orchestration
 
-- LangGraph state graph.
+- Durable LangGraph checkpoints and production tracing.
 - Explicit intent, discovery, planning, SQL, validation, analysis, and reporting nodes.
 - Conditional retries and human-review checkpoints.
 - Durable conversation and workflow state.

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import re
 import time
 from collections import defaultdict
@@ -257,6 +259,37 @@ class SchemaService:
             columns={table: frozenset(columns) for table, columns in grouped.items()},
             foreign_keys=tuple(dict(row) for row in self._cached_foreign_keys[selected_schema]),
         )
+
+    async def get_fingerprint(self, schema: str | None = None) -> str:
+        """Hash the approved schema structure for safe plan-cache invalidation."""
+        selected_schema = get_settings().resolve_schema(schema)
+        await self.get_summary(selected_schema)
+        columns = sorted(
+            (
+                str(row.get("table_name", "")),
+                str(row.get("column_name", "")),
+                str(row.get("data_type", "")),
+                str(row.get("is_nullable", "")),
+                bool(row.get("is_pk")),
+                bool(row.get("is_unique")),
+            )
+            for row in self._cached_columns[selected_schema]
+        )
+        foreign_keys = sorted(
+            (
+                str(row.get("table_name", "")),
+                str(row.get("column_name", "")),
+                str(row.get("ref_table", "")),
+                str(row.get("ref_column", "")),
+            )
+            for row in self._cached_foreign_keys[selected_schema]
+        )
+        payload = json.dumps(
+            {"schema": selected_schema, "columns": columns, "foreign_keys": foreign_keys},
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     async def get_table_definitions(self, schema: str | None = None) -> list[dict[str, Any]]:
         """Return governed comments when present and clearly marked inferred purposes otherwise."""

@@ -6,7 +6,7 @@ from typing import Any
 
 from app.core.errors import AIResponseError, AIUnavailableError
 from app.models.api import ChartSpec, ChatMessage
-from app.services.ai import ai_client
+from app.services.ai import knowledge_ai_client
 
 
 DATE_RE = re.compile(r"date|time|month|year|week|day", re.IGNORECASE)
@@ -28,7 +28,10 @@ def build_report(
 ) -> tuple[list[str], ChartSpec | None]:
     """Create deterministic, row-grounded insights and a chart recommendation."""
     if not rows:
-        return [], None
+        return [
+            "No rows matched the requested conditions.",
+            "No chart was generated because there are no authoritative values to plot.",
+        ], None
     keys = list(rows[0])
     numeric = [key for key in keys if any(isinstance(row.get(key), (int, float)) and not isinstance(row.get(key), bool) for row in rows)]
     dimensions = [key for key in keys if key not in numeric]
@@ -114,7 +117,7 @@ async def build_report_with_ai(
         ),
     ]
     try:
-        raw = (await ai_client.chat(messages)).strip()
+        raw = (await knowledge_ai_client.chat(messages)).strip()
         fenced = re.search(r"```(?:json)?\s*(.*?)```", raw, re.IGNORECASE | re.DOTALL)
         proposal = json.loads(fenced.group(1) if fenced else raw)
         return insights, validate_chart_proposal(proposal, rows, question)

@@ -2,9 +2,9 @@
 
 ## Architecture status
 
-AskMe uses one constrained, staged SQL agent implemented with ordinary Python control flow. It does not currently use LangGraph or an unrestricted ReAct loop.
+AskMe is a bounded multi-agent system orchestrated by LangGraph. A supervisor coordinates a metadata agent, schema-discovery agent, SQL agent, correction agent, reporting agent, and general-chat agent. The system uses LangChain tools with explicit contracts; it does not use an unrestricted ReAct loop.
 
-The AI model may propose SQL and summarize query results. Deterministic backend services retain control of schema access, security policy, query checking, database execution, limits, reporting, and auditing.
+Two specialized AI model roles support those agents. The SQL model proposes SELECT statements; the knowledge model explains approved metadata and summarizes verified results. Deterministic LangGraph tool nodes retain control of schema access, security policy, query checking, database execution, limits, reporting validation, and auditing.
 
 ## End-to-end flow
 
@@ -12,9 +12,10 @@ The AI model may propose SQL and summarize query results. Deterministic backend 
 React UI
   -> User selects an approved schema for the conversation
   -> POST /api/chat
-  -> FastAPI validation, request ID, policy guard, and intent routing
-  -> Semantic retrieval over approved PostgreSQL metadata
-  -> Configured AI provider plans and proposes one SELECT statement
+  -> FastAPI validation, request ID, and mutation policy guard
+  -> LangGraph supervisor routes to metadata, SQL, or chat agents
+  -> Schema agent calls the approved-schema discovery tool
+  -> SQL agent loads a validated cached plan or proposes one SELECT
   -> Full-catalog recheck for model UNSUPPORTED claims
   -> SQLGlot PostgreSQL AST policy checker
   -> PostgreSQL EXPLAIN cost guard
@@ -34,31 +35,34 @@ flowchart TD
     U[Business user] --> UI[React chat UI]
     UI -->|POST /api/chat| API[FastAPI chat endpoint]
 
-    API --> SAFE{Intent and policy guard}
+    API --> SAFE{Mutation policy guard}
     SAFE -->|Mutation request| BLOCK[Return read-only refusal]
-    SAFE -->|Metadata question| META[Metadata explanation]
-    SAFE -->|Data question| RETRIEVE[Semantic schema retrieval]
+    SAFE -->|Allowed| SUP[LangGraph supervisor]
+    SUP -->|Metadata question| META[Metadata agent]
+    SUP -->|Data question| RETRIEVE[Schema discovery agent]
+    SUP -->|General chat| CHAT[General chat agent]
 
     META --> CATALOG[(Approved PostgreSQL metadata)]
     CATALOG --> METAANSWER[Grounded metadata answer]
 
     RETRIEVE --> CATALOG
-    RETRIEVE --> PLAN[8B SQL planning and generation]
-    PLAN --> AST[SQLGlot AST policy checker]
+    RETRIEVE --> PLAN[SQL planning agent]
+    PLAN --> AST[validate_select_sql tool]
     AST -->|Rejected but correctable| RETRY[Bounded correction]
     AST -->|Approved SELECT| COST[EXPLAIN cost guard]
     COST -->|Rejected but correctable| RETRY
     RETRY -->|Maximum 3 attempts| PLAN
 
-    COST -->|Approved plan| EXEC[Read-only PostgreSQL execution]
-    EXEC --> VERIFY[Deterministic result verification]
+    COST -->|Approved plan| EXEC[execute_readonly_sql tool]
+    EXEC --> VERIFY[verify_query_result tool]
     VERIFY -->|Invalid result shape| RETRY
-    VERIFY -->|Verified rows| SUMMARY[Grounded LLM business summary]
-    SUMMARY --> REPORT[Validated insights, chart, table and exports]
+    VERIFY -->|Verified rows| REPORT[Reporting agent]
+    REPORT --> SUMMARY[Grounded summary and validated chart]
 
     BLOCK --> RESPONSE[Chat response]
     METAANSWER --> RESPONSE
-    REPORT --> RESPONSE
+    SUMMARY --> RESPONSE
+    CHAT --> RESPONSE
     RESPONSE -->|JSON response| UI
 
     API --> AUDIT[(Audit log)]
@@ -102,7 +106,8 @@ Conversation context is deliberately selective:
 
 - A complete standalone question is generated without previous failed turns.
 - Clear follow-ups such as “Only show the top 5” receive the latest bounded context.
-- Successful SQL plans are cached in process by normalized question and selected schema.
+- Successful SQL plans are persisted in SQLite by selected schema, a SHA-256 hash of the normalized question, and an authoritative schema fingerprint.
+- Changes to tables, columns, types, keys, or foreign-key relationships produce a new fingerprint and automatically miss the old plan.
 - A reused plan still passes every AST, cost, execution, and result-verification control.
 
 This prevents an unrelated failed request from contaminating a new complete question while preserving useful conversational follow-ups.
@@ -146,6 +151,8 @@ Validated SQL is executed through a Psycopg connection pool using a read-only tr
 
 After execution, deterministic result verification checks observable invariants such as count shape, top-N ordering/limits, and chartable result shape. A failed check enters the same bounded correction loop. The model then summarizes only rows returned by PostgreSQL. The reporting service adds deterministic insights. For chart-worthy questions, an AI planner may propose a chart type, title, and axes, but the backend validates every axis against the exact returned columns and permits only real numeric measures. The planner cannot generate chart values. Unsuitable questions, such as schema-variable listings, receive no chart.
 
+An empty result receives one schema-grounded correction attempt. If the corrected SQL is identical or still returns no rows, AskMe treats the result as confirmed empty and explains that no records matched. It does not fabricate a business conclusion or chart values; the report explicitly states why no chart can be generated.
+
 | Result and question shape | Output |
 |---|---|
 | Date or time series | Line chart |
@@ -164,7 +171,13 @@ The current UI also provides a collapsible history sidebar, per-conversation sch
 | Component | Location | Responsibility |
 |---|---|---|
 | Chat API | `backend/app/api/routes/chat.py` | Request orchestration and response contract |
+| Agent inventory API | `GET /api/agent/info` | Deployed framework, graph nodes, tools, and model roles |
+| LangGraph supervisor | `backend/app/agents/graph.py` | Routing, graph construction, bounded transitions, and recovery |
+| Agent state | `backend/app/agents/state.py` | Small shared state and stable result contract |
+| LangChain tools | `backend/app/agents/tools.py` | Explicit schema, validation, EXPLAIN, execution, and verification interfaces |
+| Agent debugging | `backend/app/agents/debug.py` | Opt-in redacted node transition and timing logs |
 | Query agent | `backend/app/services/query_agent.py` | Generate, recover, and summarize |
+| Plan cache | `backend/app/services/plan_cache.py` | Persist schema-versioned validated SQL plans |
 | Schema service | `backend/app/services/schema.py` | Approved catalog and progressive discovery |
 | Query checker | `backend/app/services/query_checker.py` | Pre-execution deterministic validation |
 | Cost guard | `backend/app/services/cost_guard.py` | EXPLAIN plan thresholds |
@@ -183,15 +196,21 @@ The current UI also provides a collapsible history sidebar, per-conversation sch
 
 ## Model configuration
 
-The Cloudflare model is environment-configurable:
+Both Cloudflare model roles are independently configurable:
 
 ```env
 CF_ACCOUNT_ID=your_account_id
 CF_API_TOKEN=your_api_token
 CF_AI_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
+CF_SQL_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
+CF_KNOWLEDGE_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
 CF_AI_TEMPERATURE=0.1
 CF_AI_TIMEOUT_SECONDS=60
 ```
+
+`CF_AI_MODEL` is the backwards-compatible fallback. The SQL role handles planning and bounded correction. The knowledge role handles grounded metadata explanations, verified-result summaries, database conversation, and chart proposals. Neither role authorizes or executes SQL.
+
+For local troubleshooting, set `AGENT_DEBUG=true`. Every graph node then emits structured start/end timing logs. Raw questions and SQL are hashed, while result rows and credentials are omitted. Keep it disabled when detailed operational tracing is unnecessary.
 
 ## Trust boundaries
 
@@ -204,9 +223,10 @@ CF_AI_TIMEOUT_SECONDS=60
 - PostgreSQL role permissions are the primary execution boundary.
 - Read-only sessions, limits, and timeouts provide defense in depth.
 - Browser `localStorage` history and JSONL audit files are pilot storage mechanisms.
+- The plan cache stores SQL and hashed question keys, not raw question text.
 
 ## Current limitations and roadmap
 
-Current limitations include an AST policy layer that is not a complete PostgreSQL authorization engine, lightweight synonym-based semantic retrieval rather than a governed vector catalog, in-memory backend conversations and successful-plan cache, local browser history, local audit storage, one active schema per conversation, no SSO/RBAC, no governed business glossary, and no complete golden-query evaluation suite.
+Current limitations include an AST policy layer that is not a complete PostgreSQL authorization engine, lightweight synonym-based semantic retrieval rather than a governed vector catalog, in-memory backend conversations, a local SQLite plan cache, local browser history, local audit storage, one active schema per conversation, no SSO/RBAC, no governed business glossary, and no complete golden-query evaluation suite.
 
-After stage contracts and evaluation are stable, the same stages can become bounded LangGraph nodes for improved state management and observability. Security decisions must remain deterministic and outside model control.
+The current graph is intentionally bounded rather than an open-ended tool loop. Future work includes durable LangGraph checkpointing, LangSmith-compatible tracing, role-based tool access, and a golden-query evaluation suite. Security decisions remain deterministic and outside model control.

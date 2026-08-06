@@ -63,15 +63,21 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173"
     askme_api_key: str = ""
     expose_sql: bool = False
+    agent_debug: bool = False
     max_rows: int = 50
     max_history_turns: int = 8
     schema_cache_seconds: int = 600
     schema_max_tables: int = 8
     sql_max_attempts: int = 3
+    plan_cache_path: str = "logs/plan_cache.sqlite3"
+    plan_cache_max_entries: int = 1000
 
     cf_account_id: str = ""
     cf_api_token: str = ""
+    # CF_AI_MODEL remains the backwards-compatible fallback for both roles.
     cf_ai_model: str = "@cf/meta/llama-3.1-8b-instruct-fast"
+    cf_sql_model: str = ""
+    cf_knowledge_model: str = ""
     cf_ai_temperature: float = 0.1
     cf_ai_timeout_seconds: float = 60
 
@@ -125,6 +131,13 @@ class Settings(BaseSettings):
             raise ValueError("SQL_MAX_ATTEMPTS must be between 1 and 3")
         return value
 
+    @field_validator("plan_cache_max_entries")
+    @classmethod
+    def validate_plan_cache_max_entries(cls, value: int) -> int:
+        if not 10 <= value <= 100000:
+            raise ValueError("PLAN_CACHE_MAX_ENTRIES must be between 10 and 100000")
+        return value
+
     @field_validator("db_explain_max_cost")
     @classmethod
     def validate_explain_cost(cls, value: float) -> float:
@@ -150,6 +163,14 @@ class Settings(BaseSettings):
     @property
     def cloudflare_configured(self) -> bool:
         return bool(self.cf_account_id and self.cf_api_token and self.cf_ai_model)
+
+    @property
+    def sql_model(self) -> str:
+        return self.cf_sql_model.strip() or self.cf_ai_model
+
+    @property
+    def knowledge_model(self) -> str:
+        return self.cf_knowledge_model.strip() or self.cf_ai_model
 
     @property
     def ai_configured(self) -> bool:
