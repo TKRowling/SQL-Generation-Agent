@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from functools import lru_cache
+from typing import Literal
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from pydantic import BaseModel, field_validator
@@ -72,6 +73,8 @@ class Settings(BaseSettings):
     plan_cache_path: str = "logs/plan_cache.sqlite3"
     plan_cache_max_entries: int = 1000
 
+    ai_provider: Literal["cloudflare", "ollama"] = "cloudflare"
+
     cf_account_id: str = ""
     cf_api_token: str = ""
     # CF_AI_MODEL remains the backwards-compatible fallback for both roles.
@@ -80,6 +83,13 @@ class Settings(BaseSettings):
     cf_knowledge_model: str = ""
     cf_ai_temperature: float = 0.1
     cf_ai_timeout_seconds: float = 60
+
+    ollama_base_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = "llama3.1:8b"
+    ollama_sql_model: str = ""
+    ollama_knowledge_model: str = ""
+    ollama_ai_temperature: float = 0.1
+    ollama_ai_timeout_seconds: float = 120
 
     db_url: str = ""
     db_user: str = ""
@@ -173,7 +183,21 @@ class Settings(BaseSettings):
         return self.cf_knowledge_model.strip() or self.cf_ai_model
 
     @property
+    def ollama_configured(self) -> bool:
+        return bool(self.ollama_base_url.strip() and self.ollama_model.strip())
+
+    @property
+    def ollama_sql_model_name(self) -> str:
+        return self.ollama_sql_model.strip() or self.ollama_model
+
+    @property
+    def ollama_knowledge_model_name(self) -> str:
+        return self.ollama_knowledge_model.strip() or self.ollama_model
+
+    @property
     def ai_configured(self) -> bool:
+        if self.ai_provider == "ollama":
+            return self.ollama_configured
         return self.cloudflare_configured
 
     @property

@@ -60,3 +60,22 @@ def test_cloudflare_requires_account_and_token() -> None:
     )
     assert settings.cloudflare_configured
     assert settings.ai_configured
+
+
+def test_selected_ollama_provider_uses_specialized_model_fallbacks() -> None:
+    settings = Settings(
+        ai_provider="ollama",
+        ollama_base_url="http://ollama:11434",
+        ollama_model="llama3.1:8b",
+        ollama_sql_model="qwen2.5-coder:14b",
+        _env_file=None,
+    )
+
+    assert settings.ai_configured
+    assert settings.ollama_sql_model_name == "qwen2.5-coder:14b"
+    assert settings.ollama_knowledge_model_name == "llama3.1:8b"
+
+
+def test_rejects_unknown_ai_provider() -> None:
+    with pytest.raises(ValueError):
+        Settings(ai_provider="unknown", _env_file=None)

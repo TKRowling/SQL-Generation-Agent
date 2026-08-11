@@ -7,7 +7,7 @@ AskMe Web is a React and FastAPI replacement for the original Telegram text-to-S
 - Frontend: React, TypeScript, Vite
 - Backend: FastAPI, Pydantic, Pydantic Settings
 - Agent orchestration: LangGraph with LangChain tools
-- AI: Cloudflare Workers AI REST API
+- AI: selectable Cloudflare Workers AI or Ollama REST API
 - Database: PostgreSQL through `psycopg` and `psycopg-pool`
 - SQL AST: SQLGlot with the PostgreSQL dialect
 - Runtime skill: `backend/app/skills/askme-data-assistant/SKILL.md`
@@ -44,7 +44,7 @@ For safe local graph tracing, set `AGENT_DEBUG=true` in `backend/.env` and resta
 - Node.js 20.19 or newer
 - A running PostgreSQL server
 - A PostgreSQL database and login role
-- Cloudflare account ID and Workers AI API token
+- Either Cloudflare Workers AI credentials or a reachable Ollama service
 
 ## 1. Configure a local PostgreSQL connection
 
@@ -87,9 +87,10 @@ For local connections that explicitly disable TLS:
 DB_URL=postgresql://localhost:5432/askme?sslmode=disable
 ```
 
-Configure Cloudflare Workers AI in the same file:
+Choose the AI provider in the same file. For Cloudflare Workers AI:
 
 ```env
+AI_PROVIDER=cloudflare
 CF_ACCOUNT_ID=your_account_id
 CF_API_TOKEN=your_api_token
 CF_AI_MODEL=@cf/meta/llama-3.1-8b-instruct-fast
@@ -100,6 +101,20 @@ CF_AI_TIMEOUT_SECONDS=60
 ```
 
 The SQL model handles SELECT planning and bounded correction. The knowledge model handles database metadata explanations, verified-result summaries, chart planning, and general database questions. A blank specialized setting falls back to `CF_AI_MODEL`.
+
+For a customer-managed Ollama service:
+
+```env
+AI_PROVIDER=ollama
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=llama3.1:8b
+OLLAMA_SQL_MODEL=qwen2.5-coder:14b
+OLLAMA_KNOWLEDGE_MODEL=llama3.1:8b
+OLLAMA_AI_TEMPERATURE=0.1
+OLLAMA_AI_TIMEOUT_SECONDS=120
+```
+
+Blank specialized Ollama model settings fall back to `OLLAMA_MODEL`. If FastAPI and Ollama run in separate containers on the same Docker network, use the Ollama service URL such as `http://ollama:11434`. Restart FastAPI after changing `AI_PROVIDER`, because the provider clients are created during application import.
 
 Useful database settings:
 

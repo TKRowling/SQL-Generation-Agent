@@ -107,11 +107,11 @@ async def chat(request: ChatRequest) -> ChatResponse:
             "The PostgreSQL database is unreachable. Check that PostgreSQL is running and verify the host, port, database, user, and password.",
         ) from exc
     except AIUnavailableError as exc:
-        logger.warning("Cloudflare Workers AI request failed: %s", exc)
+        logger.warning("AI provider request failed: %s", exc)
         message = (
             str(exc)
             if settings.app_env.lower() == "development"
-            else "Cloudflare Workers AI is temporarily unavailable or rate-limited."
+            else "The configured AI provider is temporarily unavailable or rate-limited."
         )
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
