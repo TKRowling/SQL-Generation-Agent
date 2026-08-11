@@ -19,7 +19,7 @@ from app.agents.tools import (
     get_schema_fingerprint,
     search_approved_schema,
     validate_select_sql,
-    verify_query_result,
+    verify_query_result,   
 )
 from app.services.plan_cache import plan_cache
 from app.services.query_agent import (
