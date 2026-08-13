@@ -20,7 +20,7 @@ class AgentState(TypedDict, total=False):
     sql: str
     normalized_sql: str
     rows: list[dict[str, Any]]
-    answer: str
+    answer: str | None
     kind: Literal["data", "chat"]
     insights: list[str]
     chart: ChartSpec | None
@@ -29,7 +29,7 @@ class AgentState(TypedDict, total=False):
     cached_plan: bool
     attempted_sql: list[str]
     fatal_error: bool
-    exception: Exception
+    exception: Exception | None
 
 
 @dataclass

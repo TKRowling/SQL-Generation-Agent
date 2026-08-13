@@ -21,7 +21,6 @@ from app.models.api import (
     ResetRequest,
     ResetResponse,
 )
-from app.services.history import conversation_store
 from app.services.audit import audit_service
 from app.agents.graph import multi_agent_system
 from app.services.query_agent import looks_like_destructive_request
@@ -44,8 +43,6 @@ async def chat(request: ChatRequest) -> ChatResponse:
         selected_schema = settings.resolve_schema(request.schema_name)
     except ValueError as exc:
         raise api_error(status.HTTP_400_BAD_REQUEST, "INVALID_SCHEMA", str(exc)) from exc
-    history = await conversation_store.get(request.session_id)
-
     if looks_like_destructive_request(request.message):
         response = ChatResponse(
             kind="chat",
@@ -65,9 +62,9 @@ async def chat(request: ChatRequest) -> ChatResponse:
         result = await multi_agent_system.run(
             question=request.message,
             schema_name=selected_schema,
-            history=history,
             system_prompt=settings.bot_system_prompt,
             force_data=request.force_data,
+            session_id=request.session_id,
         )
         kind = result.kind
     except ForbiddenQueryError as exc:
@@ -78,7 +75,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
         ) from exc
     except UnsupportedDataQuestionError as exc:
         execution_ms = round((time.perf_counter() - started) * 1000)
-        await conversation_store.append_exchange(
+        await multi_agent_system.append_exchange(
             request.session_id, request.message, str(exc)
         )
         await audit_service.record({
@@ -129,7 +126,6 @@ async def chat(request: ChatRequest) -> ChatResponse:
             f"The request could not be completed: {exc}",
         ) from exc
 
-    await conversation_store.append_exchange(request.session_id, request.message, result.answer)
     sql = result.sql if settings.expose_sql else None
     execution_ms = round((time.perf_counter() - started) * 1000)
     response = ChatResponse(
@@ -149,12 +145,12 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
 @router.post("/reset", response_model=ResetResponse)
 async def reset_chat(request: ResetRequest) -> ResetResponse:
-    await conversation_store.reset(request.session_id)
+    await multi_agent_system.reset_thread(request.session_id)
     return ResetResponse()
 
 
 @router.put("/history", response_model=ResetResponse)
 async def replace_history(request: HistoryReplaceRequest) -> ResetResponse:
     """Restore the valid prefix after a user edits an earlier question."""
-    await conversation_store.replace(request.session_id, request.messages)
+    await multi_agent_system.replace_history(request.session_id, request.messages)
     return ResetResponse()

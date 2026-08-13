@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from uuid import uuid4
 
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from app.core.config import get_settings
@@ -45,6 +47,7 @@ class AskMeMultiAgentSystem:
     """Build and run the bounded LangGraph multi-agent workflow."""
 
     def __init__(self) -> None:
+        self.checkpointer = MemorySaver()
         self.graph = self._build_graph()
 
     def _build_graph(self):
@@ -60,6 +63,7 @@ class AskMeMultiAgentSystem:
         graph.add_node("correction_agent", traced_node("correction_agent", self._correction_agent))
         graph.add_node("reporting_agent", traced_node("reporting_agent", self._reporting_agent))
         graph.add_node("chat_agent", traced_node("chat_agent", self._chat_agent))
+        graph.add_node("remember", traced_node("remember", self._remember))
         graph.add_node("failed", traced_node("failed", self._failed))
 
         graph.add_edge(START, "supervisor")
@@ -92,9 +96,10 @@ class AskMeMultiAgentSystem:
             "verify_tool", self._after_verify, {"success": "reporting_agent", "retry": "correction_agent", "fail": "failed"}
         )
         graph.add_edge("correction_agent", "validate_tool")
-        graph.add_edge("reporting_agent", END)
-        graph.add_edge("chat_agent", END)
-        return graph.compile()
+        graph.add_edge("reporting_agent", "remember")
+        graph.add_edge("chat_agent", "remember")
+        graph.add_edge("remember", END)
+        return graph.compile(checkpointer=self.checkpointer)
 
     async def _supervisor(self, state: AgentState) -> dict[str, Any]:
         question = state["question"]
@@ -318,6 +323,16 @@ class AskMeMultiAgentSystem:
             "chart": None,
         }
 
+    async def _remember(self, state: AgentState) -> dict[str, Any]:
+        """Append the completed exchange to checkpointed conversation history."""
+        max_messages = get_settings().max_history_turns * 2
+        history = [
+            *state.get("history", []),
+            ChatMessage(role="user", content=state["question"]),
+            ChatMessage(role="assistant", content=state.get("answer", "")),
+        ][-max_messages:]
+        return {"history": history}
+
     async def _failed(self, state: AgentState) -> dict[str, Any]:
         if state.get("exception") is not None:
             raise state["exception"]
@@ -336,19 +351,40 @@ class AskMeMultiAgentSystem:
         self,
         question: str,
         schema_name: str,
-        history: list[ChatMessage],
         system_prompt: str,
         force_data: bool = False,
+        session_id: str | None = None,
+        history: list[ChatMessage] | None = None,
     ) -> MultiAgentAnswer:
+        thread_id = session_id or str(uuid4())
         final = await self.graph.ainvoke(
             {
                 "question": question,
                 "schema_name": schema_name,
-                "history": history,
                 "system_prompt": system_prompt,
                 "force_data": force_data,
+                **({"history": history} if history is not None else {}),
+                # Clear request-scoped values that may exist in the previous checkpoint.
+                "route": "sql",
+                "schema_context": "",
+                "schema_fingerprint": "",
+                "sql": "",
+                "normalized_sql": "",
+                "rows": [],
+                "answer": None,
+                "insights": [],
+                "chart": None,
+                "attempt": 1,
+                "error": "",
+                "cached_plan": False,
+                "attempted_sql": [],
+                "fatal_error": False,
+                "exception": None,
             },
-            config={"recursion_limit": 30},
+            config={
+                "recursion_limit": 30,
+                "configurable": {"thread_id": thread_id},
+            },
         )
         return MultiAgentAnswer(
             kind=final.get("kind", "chat"),
@@ -358,6 +394,50 @@ class AskMeMultiAgentSystem:
             insights=final.get("insights", []),
             chart=final.get("chart"),
         )
+
+    @staticmethod
+    def _thread_config(session_id: str) -> dict[str, Any]:
+        return {"configurable": {"thread_id": session_id}}
+
+    async def reset_thread(self, session_id: str) -> None:
+        """Delete all LangGraph checkpoints for one frontend conversation."""
+        await self.checkpointer.adelete_thread(session_id)
+
+    async def replace_history(
+        self,
+        session_id: str,
+        messages: list[ChatMessage],
+    ) -> None:
+        """Replace a thread with the valid prefix retained after a user edit."""
+        await self.reset_thread(session_id)
+        max_messages = get_settings().max_history_turns * 2
+        safe_messages = [
+            message.model_copy()
+            for message in messages
+            if message.role in {"user", "assistant"}
+        ][-max_messages:]
+        await self.graph.aupdate_state(
+            self._thread_config(session_id),
+            {"history": safe_messages},
+        )
+
+    async def append_exchange(
+        self,
+        session_id: str,
+        user_text: str,
+        answer: str,
+    ) -> None:
+        """Record a handled error that terminates before the remember node."""
+        config = self._thread_config(session_id)
+        snapshot = await self.graph.aget_state(config)
+        current = list(snapshot.values.get("history", [])) if snapshot.values else []
+        max_messages = get_settings().max_history_turns * 2
+        history = [
+            *current,
+            ChatMessage(role="user", content=user_text),
+            ChatMessage(role="assistant", content=answer),
+        ][-max_messages:]
+        await self.graph.aupdate_state(config, {"history": history})
 
 
 multi_agent_system = AskMeMultiAgentSystem()

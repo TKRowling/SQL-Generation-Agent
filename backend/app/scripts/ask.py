@@ -10,7 +10,6 @@ async def run(question: str) -> None:
     result = await multi_agent_system.run(
         question=question,
         schema_name=settings.db_schema,
-        history=[],
         system_prompt=settings.bot_system_prompt,
         force_data=True,
     )
